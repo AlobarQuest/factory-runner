@@ -52,3 +52,9 @@ Run:
 uv sync --dev
 make check
 ```
+
+## Rollout State
+
+| Target repo | State | Notes |
+|---|---|---|
+| `AlobarQuest/orchestrator` | planned | First pilot target after WS-4.1 credential setup and approved work unit. |
