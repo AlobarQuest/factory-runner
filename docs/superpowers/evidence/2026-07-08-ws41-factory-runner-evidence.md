@@ -16,16 +16,23 @@ Scope: Phase 4 WS-4.1 only
 - Added reusable GitHub Actions workflow
   `.github/workflows/factory-runner.yml`.
 - Added rollout documentation for BWS/GitHub/Coolify-managed secret references.
+- Created the durable GitHub-hosted-runner M2M credential in BWS through UUID
+  `d2a4c0fc-128b-4bf5-8e25-b481010e1be0`.
+- Configured the orchestrator pilot GitHub Actions secrets:
+  `FACTORY_RUNNER_TOKEN` and `FACTORY_RUNNER_CREDENTIAL_KEY_ID`.
+- Configured production `ORCHESTRATOR_M2M_CREDENTIALS` with the
+  `factory-runner-github` credential key ID and a token hash only.
+- Activated the `factory-runner` registry actor in `security-standards` at
+  `972c64a75ba07e3b8d811b13643aa0c0b803b6fc`.
+- Built and deployed production image
+  `ghcr.io/alobarquest/orchestrator:656fcef-ws41-registry` with registry digest
+  `185062d4b00a663ca89efd530949da8a188a1456a74770a3da53a4bdc7f38949`.
 - Added orchestrator runner-brief API support in the orchestrator worktree.
 - Added manual orchestrator pilot consumer workflow
   `.github/workflows/factory-runner-pilot.yml` in the orchestrator worktree.
 
 ## Not Completed In This Session
 
-- Live durable M2M credential creation and GitHub/Coolify secret configuration
-  are intentionally deferred to a fresh infra/credential session. This session
-  mixed code/repository work with review of hostile external/repo data, so live
-  secret and production configuration mutation was not performed.
 - No live pilot workflow was dispatched.
 - No PR was merged.
 
@@ -48,6 +55,10 @@ Scope: Phase 4 WS-4.1 only
 - Production health probes:
   - `https://sds.alobar.net/health/live` returned `200`.
   - `https://sds.alobar.net/health/ready` returned `200`.
+- Production M2M smoke probe:
+  - Missing credentials returned `401`.
+  - `X-Credential-Key-Id: factory-runner-github` plus the BWS-backed bearer
+    token returned `200` for `GET /api/v1/status-ledger`.
 
 ## Commits
 
@@ -62,4 +73,4 @@ Scope: Phase 4 WS-4.1 only
 - No tracker canonicalization.
 - No brain learning or promotion.
 - No graduation automation.
-- No live production infrastructure mutation beyond read-only health checks.
+- No live pilot dispatch.

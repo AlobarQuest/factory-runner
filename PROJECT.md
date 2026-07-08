@@ -1,7 +1,7 @@
 ---
 project: factory-runner
 foundation: false
-status: implementation-ready
+status: pilot-ready
 owner: Devon
 ---
 
@@ -20,9 +20,8 @@ the production orchestrator at `https://sds.alobar.net`.
 - Reusable runner package, authority validation, orchestrator client, evidence
   rendering, preparation CLI, and reusable GitHub Actions workflow are
   implemented.
-- Runner credential consumption is documented through BWS/GitHub/Coolify-managed
-  references. Live M2M credential creation and repository secret configuration
-  remain pending in a separate infra/credential session.
+- Durable runner M2M credential is stored in BWS and configured through
+  GitHub/Coolify-managed references for the orchestrator pilot.
 - The `AlobarQuest/orchestrator` pilot consumer workflow is implemented in the
   orchestrator worktree but has not been dispatched.
 - Devon's merge gate is permanent. This repository must not add merge behavior.
@@ -63,4 +62,4 @@ make check
 
 | Target repo | State | Notes |
 |---|---|---|
-| `AlobarQuest/orchestrator` | workflow implemented, not dispatched | First pilot target after live credential setup and approved work unit. |
+| `AlobarQuest/orchestrator` | credentialed, not dispatched | First pilot target after approved work unit. |
