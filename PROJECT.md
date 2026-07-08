@@ -1,7 +1,7 @@
 ---
 project: factory-runner
 foundation: false
-status: ws43-local-heavy-pending-merge
+status: ws43-local-heavy-merged
 owner: Devon
 ---
 
@@ -23,10 +23,10 @@ local-heavy runtime adapter for Devon's machine as a worker.
   GitHub/Coolify-managed references for the orchestrator pilot.
 - The `AlobarQuest/orchestrator` pilot consumer workflow is merged in
   orchestrator PR #16 but has not been dispatched.
-- WS-4.3 local-heavy runtime is implemented on branch
-  `ws43-local-heavy-runtime` pending Devon merge. It adds manual
-  claim/renew/reclaim/finalize commands for approved work units that are too
-  large, stateful, multi-repo, or context-heavy for the GitHub-hosted runner.
+- WS-4.3 local-heavy runtime is merged in `AlobarQuest/factory-runner` PR #3 at
+  merge commit `b16f471`. It adds manual claim/renew/reclaim/finalize commands
+  for approved work units that are too large, stateful, multi-repo, or
+  context-heavy for the GitHub-hosted runner.
 - Devon's merge gate is permanent. This repository must not add merge behavior.
 
 ## Scope Boundaries
