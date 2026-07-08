@@ -292,3 +292,323 @@ def test_finalize_run_commits_pr_evidence_and_submits(tmp_path: Path) -> None:
     assert "SDS-Package-Rev: 1" in commit_message
     assert any(name == "evidence" for name, _item in calls)
     assert calls[-1][0] == "submit"
+
+
+def test_local_heavy_prepare_writes_sanitized_workspace(tmp_path: Path) -> None:
+    brief = _runner_brief()
+    calls: list[tuple[str, object]] = []
+
+    class FakeClient:
+        def __init__(self, *, base_url: str, credential_key_id: str, token: str) -> None:
+            calls.append(("init", (base_url, credential_key_id, token)))
+
+        def get_runner_brief(self, unit_id: str) -> RunnerBrief:
+            calls.append(("brief", unit_id))
+            return brief
+
+        def claim(
+            self,
+            unit_id: str,
+            *,
+            expected_version: int,
+            idempotency_key: str,
+            standing_context: dict[str, object],
+        ) -> dict[str, object]:
+            calls.append(("claim", (unit_id, expected_version, idempotency_key, standing_context)))
+            return {
+                "claim_id": "claim-1",
+                "attempt": 1,
+                "lease_token": "lease-redacted",
+                "expires_at": "2026-07-08T12:00:00Z",
+                "context_snapshot_id": "snapshot-1",
+            }
+
+        def start(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
+            calls.append(("start", (unit_id, payload)))
+            return {"unit_id": unit_id, "state": "executing", "version": 5}
+
+    from factory_runner import cli as cli_module
+
+    original_client = cli_module.OrchestratorClient
+    cli_module.OrchestratorClient = FakeClient
+    try:
+        result = CliRunner().invoke(
+            app,
+            [
+                "local-heavy-prepare",
+                "--orchestrator-url",
+                "https://sds.alobar.net",
+                "--credential-key-id",
+                "factory-runner-github",
+                "--work-unit-id",
+                "unit-1",
+                "--current-repository",
+                "AlobarQuest/orchestrator",
+                "--workspace-dir",
+                str(tmp_path),
+            ],
+            env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+        )
+    finally:
+        cli_module.OrchestratorClient = original_client
+
+    assert result.exit_code == 0, result.output
+    assert "local-heavy prepared work unit unit-1 attempt 1" in result.output
+    assert "lease-redacted" not in result.output
+    assert "redacted-token" not in result.output
+    manifest = json.loads((tmp_path / "run.json").read_text())
+    assert manifest["runtime"] == "local-heavy"
+    assert manifest["lease_token"] == "lease-redacted"
+    brief_payload = json.loads((tmp_path / "brief.json").read_text())
+    assert "secret_values" not in brief_payload["authority"]["envelope"]["constraints"]
+    prompt = (tmp_path / "prompt.md").read_text()
+    assert "Local-Heavy Runtime Work Unit" in prompt
+    assert "Do not merge pull requests" in prompt
+
+
+def test_local_heavy_renew_updates_workspace_without_printing_lease(tmp_path: Path) -> None:
+    brief = _runner_brief()
+    (tmp_path / "brief.json").write_text(brief.model_dump_json())
+    (tmp_path / "run.json").write_text(
+        json.dumps(
+            {
+                "attempt": 2,
+                "claim_id": "claim-1",
+                "context_snapshot_id": "snapshot-1",
+                "lease_token": "lease-redacted",
+                "package_revision_id": "rev-1",
+                "runtime": "local-heavy",
+                "submit_expected_version": 5,
+                "verification_commands": ["make check"],
+                "work_unit_id": "unit-1",
+            }
+        )
+    )
+    calls: list[tuple[str, object]] = []
+
+    class FakeClient:
+        def __init__(self, *, base_url: str, credential_key_id: str, token: str) -> None:
+            calls.append(("init", (base_url, credential_key_id, token)))
+
+        def renew(
+            self,
+            unit_id: str,
+            *,
+            attempt: int,
+            lease_token: str,
+            idempotency_key: str,
+            expected_version: int | None = None,
+        ) -> dict[str, object]:
+            calls.append(
+                ("renew", (unit_id, attempt, lease_token, idempotency_key, expected_version))
+            )
+            return {
+                "claim_id": "claim-1",
+                "attempt": attempt,
+                "lease_token": "",
+                "expires_at": "2026-07-08T12:15:00Z",
+                "context_snapshot_id": "snapshot-1",
+            }
+
+    from factory_runner import cli as cli_module
+
+    original_client = cli_module.OrchestratorClient
+    cli_module.OrchestratorClient = FakeClient
+    try:
+        result = CliRunner().invoke(
+            app,
+            [
+                "local-heavy-renew",
+                "--orchestrator-url",
+                "https://sds.alobar.net",
+                "--credential-key-id",
+                "factory-runner-github",
+                "--work-unit-id",
+                "unit-1",
+                "--workspace-dir",
+                str(tmp_path),
+                "--idempotency-key",
+                "local-heavy:unit-1:renew:a2",
+            ],
+            env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+        )
+    finally:
+        cli_module.OrchestratorClient = original_client
+
+    assert result.exit_code == 0, result.output
+    assert "renewed local-heavy lease for unit-1" in result.output
+    assert "lease-redacted" not in result.output
+    manifest = json.loads((tmp_path / "run.json").read_text())
+    assert manifest["lease_token"] == "lease-redacted"
+    assert manifest["lease_expires_at"] == "2026-07-08T12:15:00Z"
+    assert calls[1] == (
+        "renew",
+        ("unit-1", 2, "lease-redacted", "local-heavy:unit-1:renew:a2", None),
+    )
+
+
+def test_local_heavy_reclaim_uses_orchestrator_reclaim_api(tmp_path: Path) -> None:
+    brief = _runner_brief()
+    calls: list[tuple[str, object]] = []
+
+    class FakeClient:
+        def __init__(self, *, base_url: str, credential_key_id: str, token: str) -> None:
+            calls.append(("init", (base_url, credential_key_id, token)))
+
+        def get_runner_brief(self, unit_id: str) -> RunnerBrief:
+            calls.append(("brief", unit_id))
+            return brief
+
+        def reclaim_expired_claim(
+            self,
+            unit_id: str,
+            *,
+            next_owner_id: str,
+            idempotency_key: str,
+            expected_version: int | None = None,
+            standing_context: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append(
+                (
+                    "reclaim",
+                    (unit_id, next_owner_id, idempotency_key, expected_version, standing_context),
+                )
+            )
+            return {
+                "claim_id": "claim-2",
+                "attempt": 3,
+                "lease_token": "new-lease-redacted",
+                "expires_at": "2026-07-08T12:30:00Z",
+                "context_snapshot_id": "snapshot-2",
+            }
+
+    from factory_runner import cli as cli_module
+
+    original_client = cli_module.OrchestratorClient
+    cli_module.OrchestratorClient = FakeClient
+    try:
+        result = CliRunner().invoke(
+            app,
+            [
+                "local-heavy-reclaim",
+                "--orchestrator-url",
+                "https://sds.alobar.net",
+                "--credential-key-id",
+                "factory-runner-github",
+                "--work-unit-id",
+                "unit-1",
+                "--current-repository",
+                "AlobarQuest/orchestrator",
+                "--workspace-dir",
+                str(tmp_path),
+                "--next-owner-id",
+                "factory-runner",
+                "--idempotency-key",
+                "local-heavy:unit-1:reclaim",
+            ],
+            env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+        )
+    finally:
+        cli_module.OrchestratorClient = original_client
+
+    assert result.exit_code == 0, result.output
+    assert "reclaimed local-heavy lease for unit-1 attempt 3" in result.output
+    assert "new-lease-redacted" not in result.output
+    manifest = json.loads((tmp_path / "run.json").read_text())
+    assert manifest["runtime"] == "local-heavy"
+    assert manifest["attempt"] == 3
+    assert manifest["lease_token"] == "new-lease-redacted"
+    assert calls[2] == (
+        "reclaim",
+        (
+            "unit-1",
+            "factory-runner",
+            "local-heavy:unit-1:reclaim",
+            None,
+            {"context_snapshot_id": "snapshot-1"},
+        ),
+    )
+
+
+def test_local_heavy_finalize_submits_evidence_without_leaking_lease(tmp_path: Path) -> None:
+    brief = _runner_brief()
+    (tmp_path / "brief.json").write_text(brief.model_dump_json())
+    (tmp_path / "run.json").write_text(
+        json.dumps(
+            {
+                "attempt": 1,
+                "claim_id": "claim-1",
+                "context_snapshot_id": "snapshot-1",
+                "lease_token": "lease-redacted",
+                "package_revision_id": "rev-1",
+                "runtime": "local-heavy",
+                "submit_expected_version": 5,
+                "verification_commands": ["make check"],
+                "work_unit_id": "unit-1",
+            }
+        )
+    )
+    calls: list[tuple[str, object]] = []
+
+    class FakeClient:
+        def __init__(self, *, base_url: str, credential_key_id: str, token: str) -> None:
+            calls.append(("init", (base_url, credential_key_id, token)))
+
+        def submit_evidence(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
+            calls.append(("evidence", (unit_id, payload)))
+            return {"id": f"evidence-{len(calls)}"}
+
+        def submit(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
+            calls.append(("submit", (unit_id, payload)))
+            return {"unit_id": unit_id, "state": "submitted", "version": 6}
+
+    def fake_run(command: list[str], **_kwargs: object) -> str:
+        calls.append(("run", command))
+        if command[:3] == ["git", "status", "--porcelain"]:
+            return " M src/example.py\n"
+        if command[:3] == ["git", "rev-parse", "HEAD"]:
+            return "abc123\n"
+        if command[:3] == ["gh", "pr", "create"]:
+            assert "lease-redacted" not in command
+            return "https://github.com/AlobarQuest/orchestrator/pull/99\n"
+        return ""
+
+    from factory_runner import cli as cli_module
+
+    original_client = cli_module.OrchestratorClient
+    original_run = cli_module._run_command
+    cli_module.OrchestratorClient = FakeClient
+    cli_module._run_command = fake_run
+    try:
+        result = CliRunner().invoke(
+            app,
+            [
+                "local-heavy-finalize",
+                "--orchestrator-url",
+                "https://sds.alobar.net",
+                "--credential-key-id",
+                "factory-runner-github",
+                "--work-unit-id",
+                "unit-1",
+                "--workspace-dir",
+                str(tmp_path),
+            ],
+            env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+        )
+    finally:
+        cli_module.OrchestratorClient = original_client
+        cli_module._run_command = original_run
+
+    assert result.exit_code == 0, result.output
+    assert "local-heavy submitted work unit unit-1" in result.output
+    assert "lease-redacted" not in result.output
+    evidence_payloads: list[dict[str, object]] = []
+    for name, item in calls:
+        if name == "evidence" and isinstance(item, tuple):
+            payload = item[1]
+            if isinstance(payload, dict):
+                evidence_payloads.append(payload)
+    assert evidence_payloads
+    assert all(
+        "lease-redacted" not in json.dumps(payload["payload"]) for payload in evidence_payloads
+    )

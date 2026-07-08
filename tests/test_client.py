@@ -76,3 +76,83 @@ def test_client_raises_auth_error_on_401() -> None:
 
     with pytest.raises(OrchestratorAuthError):
         client.get_runner_brief("unit-1")
+
+
+def test_client_renews_claim() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["payload"] = request.read().decode()
+        return httpx.Response(
+            200,
+            json={
+                "claim_id": "claim-1",
+                "attempt": 2,
+                "lease_token": "",
+                "expires_at": "2026-07-08T12:15:00Z",
+                "context_snapshot_id": "snapshot-1",
+            },
+        )
+
+    client = OrchestratorClient(
+        base_url="https://sds.alobar.net",
+        credential_key_id="factory-runner-github",
+        token="redacted-token",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = client.renew(
+        "unit-1",
+        attempt=2,
+        lease_token="lease-redacted",
+        idempotency_key="local-heavy:unit-1:renew:a2",
+        expected_version=5,
+    )
+
+    assert result["expires_at"] == "2026-07-08T12:15:00Z"
+    assert seen["path"] == "/api/v1/work-units/unit-1/renew"
+    assert seen["payload"] == (
+        '{"attempt":2,"lease_token":"lease-redacted",'
+        '"idempotency_key":"local-heavy:unit-1:renew:a2","expected_version":5}'
+    )
+
+
+def test_client_reclaims_expired_claim() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["payload"] = request.read().decode()
+        return httpx.Response(
+            200,
+            json={
+                "claim_id": "claim-2",
+                "attempt": 3,
+                "lease_token": "new-lease",
+                "expires_at": "2026-07-08T12:30:00Z",
+                "context_snapshot_id": "snapshot-2",
+            },
+        )
+
+    client = OrchestratorClient(
+        base_url="https://sds.alobar.net",
+        credential_key_id="factory-runner-github",
+        token="redacted-token",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = client.reclaim_expired_claim(
+        "unit-1",
+        next_owner_id="factory-runner",
+        idempotency_key="local-heavy:unit-1:reclaim",
+        expected_version=7,
+        standing_context={"context_snapshot_id": "snapshot-2"},
+    )
+
+    assert result["claim_id"] == "claim-2"
+    assert seen["path"] == "/api/v1/work-units/unit-1/reclaim-expired-claim"
+    assert seen["payload"] == (
+        '{"next_owner_id":"factory-runner","idempotency_key":"local-heavy:unit-1:reclaim",'
+        '"expected_version":7,"standing_context":{"context_snapshot_id":"snapshot-2"}}'
+    )
