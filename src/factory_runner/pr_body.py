@@ -1,6 +1,10 @@
 from factory_runner.models import RunnerBrief
 
 
+def _normalize_list_item(item: str) -> str:
+    return " ".join(item.split())
+
+
 def render_pr_body(
     brief: RunnerBrief,
     *,
@@ -9,8 +13,12 @@ def render_pr_body(
     verification: list[str],
     evidence_refs: list[str],
 ) -> str:
-    verification_lines = "\n".join(f"- {item}" for item in verification) or "- Not run"
-    evidence_lines = "\n".join(f"- {item}" for item in evidence_refs) or "- Not submitted"
+    verification_lines = (
+        "\n".join(f"- {_normalize_list_item(item)}" for item in verification) or "- Not run"
+    )
+    evidence_lines = (
+        "\n".join(f"- {_normalize_list_item(item)}" for item in evidence_refs) or "- Not submitted"
+    )
     return f"""## Factory Runner Evidence
 
 Work unit: `{brief.work_unit.id}`
