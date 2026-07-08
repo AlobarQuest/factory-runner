@@ -1,7 +1,7 @@
 ---
 project: factory-runner
 foundation: false
-status: draft
+status: implementation-ready
 owner: Devon
 ---
 
@@ -16,9 +16,15 @@ the production orchestrator at `https://sds.alobar.net`.
 
 ## Current State
 
-- Repository created for WS-4.1 design.
-- No runner workflow, credential, production mutation, or pilot rollout has been
-  implemented yet.
+- Repository created for WS-4.1.
+- Reusable runner package, authority validation, orchestrator client, evidence
+  rendering, preparation CLI, and reusable GitHub Actions workflow are
+  implemented.
+- Runner credential consumption is documented through BWS/GitHub/Coolify-managed
+  references. Live M2M credential creation and repository secret configuration
+  remain pending in a separate infra/credential session.
+- The `AlobarQuest/orchestrator` pilot consumer workflow is implemented in the
+  orchestrator worktree but has not been dispatched.
 - Devon's merge gate is permanent. This repository must not add merge behavior.
 
 ## Scope Boundaries
@@ -57,4 +63,4 @@ make check
 
 | Target repo | State | Notes |
 |---|---|---|
-| `AlobarQuest/orchestrator` | planned | First pilot target after WS-4.1 credential setup and approved work unit. |
+| `AlobarQuest/orchestrator` | workflow implemented, not dispatched | First pilot target after live credential setup and approved work unit. |
