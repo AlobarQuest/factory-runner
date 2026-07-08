@@ -17,3 +17,26 @@ def test_workflow_is_manual_and_reusable_only() -> None:
 
     assert set(data["on"]) == {"workflow_dispatch", "workflow_call"}
     assert "schedule" not in data["on"]
+
+
+def test_workflow_runs_coding_wrapper_without_placeholder_stop() -> None:
+    workflow = Path(".github/workflows/factory-runner.yml").read_text()
+    data = yaml.safe_load(workflow)
+    steps = data["jobs"]["run"]["steps"]
+
+    assert "Stop before coding action" not in workflow
+    assert any(step.get("run") == "./scripts/run-factory-task.sh" for step in steps)
+
+
+def test_workflow_declares_coding_action_secret_without_exposing_m2m_token() -> None:
+    data = yaml.safe_load(Path(".github/workflows/factory-runner.yml").read_text())
+    workflow_call_secrets = data["on"]["workflow_call"]["secrets"]
+    job_env = data["jobs"]["run"]["env"]
+    steps = data["jobs"]["run"]["steps"]
+
+    assert "ANTHROPIC_API_KEY" in workflow_call_secrets
+    assert "ANTHROPIC_API_KEY" not in job_env
+    assert "FACTORY_RUNNER_TOKEN" not in job_env
+    claude_step = next(step for step in steps if step.get("name") == "Run scoped coding action")
+    assert "anthropic_api_key" in claude_step["with"]
+    assert "FACTORY_RUNNER_TOKEN" not in str(claude_step)
