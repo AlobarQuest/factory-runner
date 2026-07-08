@@ -1,1 +1,10 @@
+.DS_Store
+.venv/
+*.env
+*.key
+*.password
+runner-secrets/
 .worktrees/
+__pycache__/
+*.pyc
+*.egg-info/
