@@ -1,0 +1,61 @@
+name: Factory Runner
+
+'on':
+  workflow_dispatch:
+    inputs:
+      work_unit_id:
+        description: Approved orchestrator work-unit ID
+        required: true
+        type: string
+      orchestrator_url:
+        description: Orchestrator API URL
+        required: false
+        default: https://sds.alobar.net
+        type: string
+  workflow_call:
+    inputs:
+      work_unit_id:
+        required: true
+        type: string
+      orchestrator_url:
+        required: false
+        default: https://sds.alobar.net
+        type: string
+    secrets:
+      FACTORY_RUNNER_TOKEN:
+        required: true
+      FACTORY_RUNNER_CREDENTIAL_KEY_ID:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+  checks: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ORCHESTRATOR_URL: ${{ inputs.orchestrator_url }}
+      WORK_UNIT_ID: ${{ inputs.work_unit_id }}
+      CURRENT_REPOSITORY: ${{ github.repository }}
+      FACTORY_RUNNER_TOKEN: ${{ secrets.FACTORY_RUNNER_TOKEN }}
+      FACTORY_RUNNER_CREDENTIAL_KEY_ID: ${{ secrets.FACTORY_RUNNER_CREDENTIAL_KEY_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install factory runner
+        run: uv tool install git+https://github.com/AlobarQuest/factory-runner.git
+
+      - name: Prepare scoped run
+        run: ./scripts/run-factory-task.sh
+
+      - name: Stop before coding action until pilot credential setup is complete
+        run: |
+          echo "Runner preparation succeeded. Coding action wiring is enabled in the pilot task after credential setup."
