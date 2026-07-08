@@ -1,4 +1,5 @@
 .DS_Store
+.sds-local-heavy/
 .venv/
 *.env
 *.key

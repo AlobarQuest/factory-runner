@@ -55,6 +55,48 @@ class OrchestratorClient:
         )
         return response.json()
 
+    def renew(
+        self,
+        unit_id: str,
+        *,
+        attempt: int,
+        lease_token: str,
+        idempotency_key: str,
+        expected_version: int | None = None,
+    ) -> dict[str, Any]:
+        response = self._request(
+            "POST",
+            f"/api/v1/work-units/{unit_id}/renew",
+            json={
+                "attempt": attempt,
+                "lease_token": lease_token,
+                "idempotency_key": idempotency_key,
+                "expected_version": expected_version,
+            },
+        )
+        return response.json()
+
+    def reclaim_expired_claim(
+        self,
+        unit_id: str,
+        *,
+        next_owner_id: str,
+        idempotency_key: str,
+        expected_version: int | None = None,
+        standing_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        response = self._request(
+            "POST",
+            f"/api/v1/work-units/{unit_id}/reclaim-expired-claim",
+            json={
+                "next_owner_id": next_owner_id,
+                "idempotency_key": idempotency_key,
+                "expected_version": expected_version,
+                "standing_context": standing_context,
+            },
+        )
+        return response.json()
+
     def start(self, unit_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         return self.command(unit_id, "start", payload or {})
 
