@@ -1,6 +1,6 @@
 # WS-4.1 Factory Runner Design
 
-**Status:** Draft for Devon review
+**Status:** Approved by Devon on 2026-07-08
 **Intent package:** Pending. No approved `ws-4.1-factory-runner` package was found at draft time.
 **Scope:** Phase 4 WS-4.1 only. No orchestrator automatic dispatch, WS-4.3 local-heavy runtime, WS-4.4 infra-lane linkage, Phase 5 verifier/release immutability, tracker canonicalization, brain learning/promotion, graduation automation, or automatic merge.
 
