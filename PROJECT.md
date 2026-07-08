@@ -44,3 +44,11 @@ WS-4.1 must not implement:
 - graduation automation;
 - automatic merge.
 
+## Local Development
+
+Run:
+
+```bash
+uv sync --dev
+make check
+```
