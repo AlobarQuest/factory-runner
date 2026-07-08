@@ -26,6 +26,8 @@ name: Factory Runner
         required: true
       FACTORY_RUNNER_CREDENTIAL_KEY_ID:
         required: true
+      ANTHROPIC_API_KEY:
+        required: true
 
 permissions:
   contents: write
@@ -41,8 +43,6 @@ jobs:
       ORCHESTRATOR_URL: ${{ inputs.orchestrator_url }}
       WORK_UNIT_ID: ${{ inputs.work_unit_id }}
       CURRENT_REPOSITORY: ${{ github.repository }}
-      FACTORY_RUNNER_TOKEN: ${{ secrets.FACTORY_RUNNER_TOKEN }}
-      FACTORY_RUNNER_CREDENTIAL_KEY_ID: ${{ secrets.FACTORY_RUNNER_CREDENTIAL_KEY_ID }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,8 +54,24 @@ jobs:
         run: uv tool install git+https://github.com/AlobarQuest/factory-runner.git
 
       - name: Prepare scoped run
+        id: prepare
+        env:
+          FACTORY_RUNNER_TOKEN: ${{ secrets.FACTORY_RUNNER_TOKEN }}
+          FACTORY_RUNNER_CREDENTIAL_KEY_ID: ${{ secrets.FACTORY_RUNNER_CREDENTIAL_KEY_ID }}
         run: ./scripts/run-factory-task.sh
 
-      - name: Stop before coding action until pilot credential setup is complete
-        run: |
-          echo "Runner preparation succeeded. Coding action wiring is enabled in the pilot task after credential setup."
+      - name: Run scoped coding action
+        uses: anthropics/claude-code-base-action@beta
+        with:
+          prompt_file: ${{ steps.prepare.outputs.prompt_file }}
+          allowed_tools: ${{ steps.prepare.outputs.allowed_tools }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          max_turns: "10"
+
+      - name: Finalize scoped run
+        if: always()
+        env:
+          FACTORY_RUNNER_TOKEN: ${{ secrets.FACTORY_RUNNER_TOKEN }}
+          FACTORY_RUNNER_CREDENTIAL_KEY_ID: ${{ secrets.FACTORY_RUNNER_CREDENTIAL_KEY_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./scripts/run-factory-task.sh finalize
