@@ -66,14 +66,16 @@ jobs:
             --current-repository "$CURRENT_REPOSITORY" \
             --workspace-dir "$RUNNER_TEMP/factory-runner"
 
-      # The action declares no `model` input; it reads ANTHROPIC_MODEL from the env.
-      # Its built-in default is a retired model, so an unset value fails every run with
-      # `API Error: 404 not_found_error`.
+      # `model` must be the action INPUT, not a step-level ANTHROPIC_MODEL env var.
+      # This is a composite action whose inner step sets
+      # `ANTHROPIC_MODEL: ${{ inputs.model || inputs.anthropic_model }}` — an inner
+      # step's env overrides the caller's, so a step-level ANTHROPIC_MODEL is clobbered
+      # with the empty input and the CLI silently falls back to its own default, the
+      # retired `claude-sonnet-4-20250514`.
       - name: Run scoped coding action
         uses: anthropics/claude-code-base-action@beta
-        env:
-          ANTHROPIC_MODEL: claude-sonnet-5
         with:
+          model: claude-sonnet-5
           prompt_file: ${{ steps.prepare.outputs.prompt_file }}
           allowed_tools: ${{ steps.prepare.outputs.allowed_tools }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
