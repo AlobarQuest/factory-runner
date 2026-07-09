@@ -1,0 +1,25 @@
+{
+  "budgets": {
+    "max_attempts": 3,
+    "max_llm_calls": 4
+  },
+  "capabilities": {
+    "command.run": "allowed",
+    "github.pr.create": "allowed",
+    "orchestrator.claim": "allowed",
+    "orchestrator.evidence.write": "allowed",
+    "repo.edit": "allowed",
+    "repo.read": "allowed"
+  },
+  "change_class": "dependency-update",
+  "conformance": {
+    "accepted_standards": [],
+    "standards_touched": ["project"],
+    "status": "green"
+  },
+  "constraints": {
+    "allowed_commands": ["make check"],
+    "target_repository": "AlobarQuest/brain",
+    "work_unit_id": "__WORK_UNIT_ID__"
+  }
+}
