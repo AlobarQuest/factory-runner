@@ -63,10 +63,16 @@ jobs:
             --orchestrator-url "$ORCHESTRATOR_URL" \
             --credential-key-id "$FACTORY_RUNNER_CREDENTIAL_KEY_ID" \
             --work-unit-id "$WORK_UNIT_ID" \
-            --current-repository "$CURRENT_REPOSITORY"
+            --current-repository "$CURRENT_REPOSITORY" \
+            --workspace-dir "$RUNNER_TEMP/factory-runner"
 
+      # The action declares no `model` input; it reads ANTHROPIC_MODEL from the env.
+      # Its built-in default is a retired model, so an unset value fails every run with
+      # `API Error: 404 not_found_error`.
       - name: Run scoped coding action
         uses: anthropics/claude-code-base-action@beta
+        env:
+          ANTHROPIC_MODEL: claude-sonnet-5
         with:
           prompt_file: ${{ steps.prepare.outputs.prompt_file }}
           allowed_tools: ${{ steps.prepare.outputs.allowed_tools }}
@@ -86,4 +92,5 @@ jobs:
           factory-runner finalize-run \
             --orchestrator-url "$ORCHESTRATOR_URL" \
             --credential-key-id "$FACTORY_RUNNER_CREDENTIAL_KEY_ID" \
-            --work-unit-id "$WORK_UNIT_ID"
+            --work-unit-id "$WORK_UNIT_ID" \
+            --workspace-dir "$RUNNER_TEMP/factory-runner"

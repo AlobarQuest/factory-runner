@@ -53,3 +53,38 @@ def test_workflow_declares_coding_action_secret_without_exposing_m2m_token() -> 
     claude_step = next(step for step in steps if step.get("name") == "Run scoped coding action")
     assert "anthropic_api_key" in claude_step["with"]
     assert "FACTORY_RUNNER_TOKEN" not in str(claude_step)
+
+
+def _coding_step() -> dict:
+    data = yaml.safe_load(Path(".github/workflows/factory-runner.yml").read_text())
+    steps = data["jobs"]["run"]["steps"]
+    return next(s for s in steps if "claude-code-base-action" in str(s.get("uses", "")))
+
+
+def _cli_steps() -> str:
+    data = yaml.safe_load(Path(".github/workflows/factory-runner.yml").read_text())
+    return "\n".join(str(s.get("run", "")) for s in data["jobs"]["run"]["steps"] if "run" in s)
+
+
+def test_the_coding_action_pins_a_current_model() -> None:
+    """The action's default model is retired; it reads ANTHROPIC_MODEL from the env.
+
+    Leaving it unset made every run die with `API Error: 404 not_found_error
+    model: claude-sonnet-4-20250514`.
+    """
+    step = _coding_step()
+    model = (step.get("env") or {}).get("ANTHROPIC_MODEL")
+
+    assert model == "claude-sonnet-5"
+
+
+def test_the_workspace_lives_outside_the_repository_checkout() -> None:
+    """`.factory-runner/` inside the checkout makes `git status` never empty.
+
+    That kills the "no changes to submit" guard and lets `git add -A` commit the
+    runner's own brief.json and prompt.md into the pull request.
+    """
+    runs = _cli_steps()
+
+    assert "--workspace-dir" in runs
+    assert "RUNNER_TEMP" in runs

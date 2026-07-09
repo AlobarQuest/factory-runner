@@ -120,6 +120,10 @@ def _write_github_output(**values: str) -> None:
             output.write(f"{key}={value}\n")
 
 
+_GIT_AUTHOR_NAME = "factory-runner"
+_GIT_AUTHOR_EMAIL = "factory-runner@users.noreply.github.com"
+
+
 def _run_command(command: list[str], **kwargs: Any) -> str:
     completed = subprocess.run(
         command,
@@ -448,7 +452,21 @@ def _finalize_workspace(
     branch = f"sds/{brief.work_unit.id[:8]}-attempt-{attempt}"
     _run_command(["git", "checkout", "-B", branch])
     _run_command(["git", "add", "-A"])
-    _run_command(["git", "commit", "-m", _commit_message(brief, attempt)])
+    # GitHub-hosted runners configure no git identity, so a bare `git commit` exits 128.
+    # Passed per-command rather than written to config: the runner never mutates the
+    # checkout it was given.
+    _run_command(
+        [
+            "git",
+            "-c",
+            f"user.name={_GIT_AUTHOR_NAME}",
+            "-c",
+            f"user.email={_GIT_AUTHOR_EMAIL}",
+            "commit",
+            "-m",
+            _commit_message(brief, attempt),
+        ]
+    )
     _run_command(["git", "push", "--set-upstream", "origin", branch])
     head_sha = _run_command(["git", "rev-parse", "HEAD"]).strip()
     pr_url = _run_command(

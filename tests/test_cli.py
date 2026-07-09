@@ -283,9 +283,7 @@ def test_finalize_run_commits_pr_evidence_and_submits(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     run_commands = [item for name, item in calls if name == "run"]
     assert ["make", "check"] in run_commands
-    commit_commands = [
-        item for item in run_commands if isinstance(item, list) and item[:2] == ["git", "commit"]
-    ]
+    commit_commands = [item for item in run_commands if isinstance(item, list) and "commit" in item]
     assert commit_commands
     commit_message = "\n".join(commit_commands[0])
     assert "SDS-Unit: unit-1" in commit_message
@@ -612,3 +610,80 @@ def test_local_heavy_finalize_submits_evidence_without_leaking_lease(tmp_path: P
     assert all(
         "lease-redacted" not in json.dumps(payload["payload"]) for payload in evidence_payloads
     )
+
+
+def test_commit_carries_an_explicit_git_identity(tmp_path: Path) -> None:
+    """GitHub Actions runners have no git identity; `git commit` exits 128 without one.
+
+    The identity is passed per-command with `-c` rather than written to global config,
+    so the runner never mutates the checkout's git configuration.
+    """
+    brief = _runner_brief()
+    (tmp_path / "brief.json").write_text(brief.model_dump_json())
+    (tmp_path / "run.json").write_text(
+        json.dumps(
+            {
+                "attempt": 1,
+                "claim_id": "claim-1",
+                "context_snapshot_id": "snapshot-1",
+                "lease_token": "lease-redacted",
+                "package_revision_id": "rev-1",
+                "submit_expected_version": 5,
+                "verification_commands": ["make check"],
+                "work_unit_id": "unit-1",
+            }
+        )
+    )
+    commands: list[list[str]] = []
+
+    class FakeClient:
+        def __init__(self, **_: object) -> None: ...
+
+        def submit_evidence(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
+            return {"id": "evidence-1"}
+
+        def submit(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
+            return {"unit_id": unit_id, "state": "submitted", "version": 6}
+
+        def release(self, *_: object, **__: object) -> dict[str, object]:
+            return {}
+
+    def fake_run(command: list[str], **_: object) -> str:
+        commands.append(command)
+        if command[:2] == ["git", "status"]:
+            return " M pyproject.toml\n"
+        if command[:3] == ["gh", "pr", "create"]:
+            return "https://github.com/AlobarQuest/orchestrator/pull/99\n"
+        return ""
+
+    from factory_runner import cli as cli_module
+
+    original_client = cli_module.OrchestratorClient
+    original_run = cli_module._run_command
+    cli_module.OrchestratorClient = FakeClient
+    cli_module._run_command = fake_run
+    try:
+        CliRunner().invoke(
+            app,
+            [
+                "finalize-run",
+                "--orchestrator-url",
+                "https://sds.invalid",
+                "--credential-key-id",
+                "factory-runner-github",
+                "--work-unit-id",
+                "unit-1",
+                "--workspace-dir",
+                str(tmp_path),
+            ],
+            env={"FACTORY_RUNNER_TOKEN": "token"},
+        )
+    finally:
+        cli_module.OrchestratorClient = original_client
+        cli_module._run_command = original_run
+
+    commit = next(c for c in commands if "commit" in c)
+    assert commit[:2] == ["git", "-c"]
+    assert any(part.startswith("user.name=") for part in commit)
+    assert any(part.startswith("user.email=") for part in commit)
+    assert "config" not in commit
