@@ -9,6 +9,12 @@ class AuthorityEnvelope(BaseModel):
     capabilities: dict[str, str]
     budgets: dict[str, int | None] = Field(default_factory=dict)
     constraints: dict[str, Any] = Field(default_factory=dict)
+    # Orchestrator-owned: the change class its dispatch allowlist admits on, and the
+    # conformance attested for this unit's target repository. The runner carries both so
+    # the served envelope validates as one document, and grants nothing from either —
+    # capabilities remain the sole source of runner permissions.
+    change_class: str | None = None
+    conformance: dict[str, Any] | None = None
 
 
 class RunnerPermissions(BaseModel):
