@@ -66,16 +66,18 @@ def _cli_steps() -> str:
     return "\n".join(str(s.get("run", "")) for s in data["jobs"]["run"]["steps"] if "run" in s)
 
 
-def test_the_coding_action_pins_a_current_model() -> None:
-    """The action's default model is retired; it reads ANTHROPIC_MODEL from the env.
+def test_the_coding_action_pins_a_current_model_via_the_input() -> None:
+    """The model must be the action INPUT, never a step-level ANTHROPIC_MODEL env var.
 
-    Leaving it unset made every run die with `API Error: 404 not_found_error
-    model: claude-sonnet-4-20250514`.
+    `claude-code-base-action@beta` is a composite action whose inner step sets
+    `ANTHROPIC_MODEL: ${{ inputs.model || inputs.anthropic_model }}`. An inner step's env
+    overrides the caller's, so a step-level ANTHROPIC_MODEL is silently replaced by the
+    empty input and the CLI falls back to the retired `claude-sonnet-4-20250514`.
     """
     step = _coding_step()
-    model = (step.get("env") or {}).get("ANTHROPIC_MODEL")
 
-    assert model == "claude-sonnet-5"
+    assert step["with"]["model"] == "claude-sonnet-5"
+    assert "ANTHROPIC_MODEL" not in (step.get("env") or {})
 
 
 def test_the_workspace_lives_outside_the_repository_checkout() -> None:
