@@ -25,7 +25,20 @@ def test_workflow_runs_coding_wrapper_without_placeholder_stop() -> None:
     steps = data["jobs"]["run"]["steps"]
 
     assert "Stop before coding action" not in workflow
-    assert any(step.get("run") == "./scripts/run-factory-task.sh" for step in steps)
+    assert any("factory-runner prepare-run" in (step.get("run") or "") for step in steps)
+    assert any("factory-runner finalize-run" in (step.get("run") or "") for step in steps)
+
+
+def test_workflow_invokes_the_installed_cli_not_a_repo_local_script() -> None:
+    """actions/checkout checks out the CALLER's repo, which has no scripts/ of ours.
+
+    The workflow ran `./scripts/run-factory-task.sh` until 2026-07-09 and therefore
+    failed with exit 127 in every caller, including the pilot. Only paths provided by
+    the installed console script are reachable from a caller's working directory.
+    """
+    workflow = Path(".github/workflows/factory-runner.yml").read_text()
+
+    assert "./scripts/" not in workflow
 
 
 def test_workflow_declares_coding_action_secret_without_exposing_m2m_token() -> None:

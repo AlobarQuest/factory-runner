@@ -58,7 +58,12 @@ jobs:
         env:
           FACTORY_RUNNER_TOKEN: ${{ secrets.FACTORY_RUNNER_TOKEN }}
           FACTORY_RUNNER_CREDENTIAL_KEY_ID: ${{ secrets.FACTORY_RUNNER_CREDENTIAL_KEY_ID }}
-        run: ./scripts/run-factory-task.sh
+        run: |
+          factory-runner prepare-run \
+            --orchestrator-url "$ORCHESTRATOR_URL" \
+            --credential-key-id "$FACTORY_RUNNER_CREDENTIAL_KEY_ID" \
+            --work-unit-id "$WORK_UNIT_ID" \
+            --current-repository "$CURRENT_REPOSITORY"
 
       - name: Run scoped coding action
         uses: anthropics/claude-code-base-action@beta
@@ -68,10 +73,17 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           max_turns: "10"
 
+      # Only meaningful once prepare has claimed the unit. Without this guard an
+      # earlier failure runs finalize against an unclaimed unit, burying the real
+      # error under a second one.
       - name: Finalize scoped run
-        if: always()
+        if: always() && steps.prepare.outcome != 'skipped'
         env:
           FACTORY_RUNNER_TOKEN: ${{ secrets.FACTORY_RUNNER_TOKEN }}
           FACTORY_RUNNER_CREDENTIAL_KEY_ID: ${{ secrets.FACTORY_RUNNER_CREDENTIAL_KEY_ID }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: ./scripts/run-factory-task.sh finalize
+        run: |
+          factory-runner finalize-run \
+            --orchestrator-url "$ORCHESTRATOR_URL" \
+            --credential-key-id "$FACTORY_RUNNER_CREDENTIAL_KEY_ID" \
+            --work-unit-id "$WORK_UNIT_ID"
