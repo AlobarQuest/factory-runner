@@ -156,3 +156,52 @@ def test_client_reclaims_expired_claim() -> None:
         '{"next_owner_id":"factory-runner","idempotency_key":"local-heavy:unit-1:reclaim",'
         '"expected_version":7,"standing_context":{"context_snapshot_id":"snapshot-2"}}'
     )
+
+
+def _response(status: int, body: object) -> httpx.Response:
+    return httpx.Response(status, json=body, request=httpx.Request("POST", "https://x/api"))
+
+
+def test_describe_error_reports_validation_loc_and_msg_without_input() -> None:
+    """FastAPI's 422 `input` echoes the submitted value -- here, the lease token."""
+    from factory_runner.client import _describe_error
+
+    described = _describe_error(
+        _response(
+            422,
+            {
+                "detail": [
+                    {
+                        "type": "string_too_short",
+                        "loc": ["body", "lease_token"],
+                        "msg": "String should have at least 1 character",
+                        "input": "super-secret-lease-token",
+                    }
+                ]
+            },
+        )
+    )
+    assert "body.lease_token" in described
+    assert "at least 1 character" in described
+    assert "super-secret-lease-token" not in described
+
+
+def test_describe_error_reports_domain_error_code() -> None:
+    from factory_runner.client import _describe_error
+
+    described = _describe_error(
+        _response(
+            409, {"error": {"code": "version_conflict", "message": "work unit version changed"}}
+        )
+    )
+    assert "version_conflict" in described
+    assert "work unit version changed" in described
+
+
+def test_describe_error_survives_an_unparseable_body() -> None:
+    from factory_runner.client import _describe_error
+
+    response = httpx.Response(
+        500, text="<html>502</html>", request=httpx.Request("POST", "https://x/api")
+    )
+    assert _describe_error(response) == "(unparseable body)"
