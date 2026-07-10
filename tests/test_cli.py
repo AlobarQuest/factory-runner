@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from factory_runner.cli import app
@@ -687,3 +688,49 @@ def test_commit_carries_an_explicit_git_identity(tmp_path: Path) -> None:
     assert any(part.startswith("user.name=") for part in commit)
     assert any(part.startswith("user.email=") for part in commit)
     assert "config" not in commit
+
+
+def test_the_pull_request_is_not_created_as_a_draft(tmp_path: Path) -> None:
+    """Draft PRs are unavailable on private repos on this plan, and Devon's standing
+    instruction (2026-07-05) is that prepared PRs are not left in draft."""
+    import inspect
+
+    from factory_runner import cli as cli_module
+
+    source = inspect.getsource(cli_module._finalize_workspace)
+
+    assert '"--draft"' not in source
+
+
+def test_a_failing_command_surfaces_its_output(tmp_path: Path) -> None:
+    """`_run_command` captured stdout+stderr and then discarded it on failure, so a
+    `gh pr create` error never reached the log and had to be inferred."""
+    from factory_runner import cli as cli_module
+
+    with pytest.raises(RuntimeError) as excinfo:
+        cli_module._run_command(["sh", "-c", "echo boom-marker >&2; exit 3"])
+
+    assert "boom-marker" in str(excinfo.value)
+
+
+def test_prepare_hides_agent_artifacts_from_git(tmp_path: Path) -> None:
+    """The coding action writes its full transcript to `output.txt` in the checkout.
+
+    `git add -A` swept it into the commit, which both polluted the PR and defeated the
+    "no changes to submit" guard — the guard that would have caught a run where the agent
+    did nothing.
+    """
+    import inspect
+
+    from factory_runner import cli as cli_module
+
+    git_dir = tmp_path / ".git" / "info"
+    git_dir.mkdir(parents=True)
+
+    cli_module._exclude_agent_artifacts(tmp_path)
+
+    exclude = (git_dir / "exclude").read_text()
+    assert "output.txt" in exclude
+    # The helper is worthless unless prepare_run actually calls it, before the coding
+    # action runs and writes output.txt.
+    assert "_exclude_agent_artifacts(" in inspect.getsource(cli_module.prepare_run)
