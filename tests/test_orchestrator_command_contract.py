@@ -96,3 +96,29 @@ def test_evidence_idempotency_keys_differ_per_evidence_type() -> None:
     )
     assert pr["idempotency_key"] != verification["idempotency_key"]
     assert pr["evidence_type"] != verification["evidence_type"]
+
+
+def test_optional_str_collapses_empty_and_none_to_null() -> None:
+    """A claim without a snapshot yields "" on one path and None on another; both are
+    rejected by `context_snapshot_id: UUID | None`. Attempt 5's 422 was the "" case."""
+    from factory_runner.cli import _optional_str
+
+    assert _optional_str("") is None
+    assert _optional_str("   ") is None
+    assert _optional_str(None) is None
+    assert _optional_str("snap-123") == "snap-123"
+
+
+def test_pr_evidence_with_absent_snapshot_omits_a_bogus_uuid() -> None:
+    """The exact shape attempt 5 sent: context_snapshot_id must be null, never "" or 'None'."""
+    from factory_runner.cli import _optional_str
+
+    payload = build_pr_opened_evidence(
+        context_snapshot_id=_optional_str(""),  # the empty string run.json actually held
+        idempotency_key="factory-runner:unit-1:evidence:pr:a5",
+        pr_url="https://github.com/AlobarQuest/orchestrator/pull/38",
+        head_sha="cd1f0659",
+        **_COMMON,
+    )
+    assert payload["context_snapshot_id"] is None
+    assert payload["context_snapshot_id"] not in ("", "None")
