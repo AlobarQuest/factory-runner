@@ -12,6 +12,8 @@ def test_pr_opened_evidence_keeps_lease_token_out_of_payload() -> None:
         lease_token="lease-token-123",
         source_revision="abc123",
         context_snapshot_id="snapshot-1",
+        idempotency_key="idem-1",
+        expected_version=5,
         pr_url="https://github.com/AlobarQuest/orchestrator/pull/99",
         head_sha="def456",
     )
@@ -31,6 +33,8 @@ def test_verification_evidence_accepts_only_structured_commands() -> None:
         lease_token="lease-token-456",
         source_revision="abc123",
         context_snapshot_id="snapshot-1",
+        idempotency_key="idem-1",
+        expected_version=5,
         commands=[
             {
                 "command": "make check",
@@ -56,6 +60,8 @@ def test_verification_evidence_rejects_missing_required_fields() -> None:
             lease_token="lease-token-789",
             source_revision="abc123",
             context_snapshot_id="snapshot-1",
+            idempotency_key="idem-1",
+            expected_version=5,
             commands=[{"command": "make check", "exit_code": 0}],
         )
 
@@ -69,6 +75,8 @@ def test_verification_evidence_rejects_logs_field() -> None:
             lease_token="lease-token-789",
             source_revision="abc123",
             context_snapshot_id="snapshot-1",
+            idempotency_key="idem-1",
+            expected_version=5,
             commands=[
                 {
                     "command": "make check",

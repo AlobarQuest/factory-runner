@@ -1,0 +1,31 @@
+{
+  "EvidenceCommand": {
+    "optional": [
+      "context_snapshot_id",
+      "payload",
+      "stable_ref"
+    ],
+    "required": [
+      "ac_id",
+      "attempt",
+      "evidence_type",
+      "expected_version",
+      "idempotency_key",
+      "lease_token",
+      "source_revision",
+      "work_package_revision_id"
+    ]
+  },
+  "LifecycleCommand": {
+    "optional": [
+      "attempt",
+      "context_snapshot_id",
+      "lease_token",
+      "standing_context"
+    ],
+    "required": [
+      "expected_version",
+      "idempotency_key"
+    ]
+  }
+}
