@@ -122,3 +122,38 @@ def test_pr_evidence_with_absent_snapshot_omits_a_bogus_uuid() -> None:
     )
     assert payload["context_snapshot_id"] is None
     assert payload["context_snapshot_id"] not in ("", "None")
+
+
+def test_pr_evidence_folds_verification_into_its_payload() -> None:
+    """The orchestrator keys current evidence on ac_id, so PR and verification cannot be
+    two rows. Verification rides inside the single PR evidence payload."""
+    payload = build_pr_opened_evidence(
+        context_snapshot_id=None,
+        idempotency_key="factory-runner:unit-1:evidence:pr:a6",
+        pr_url="https://github.com/AlobarQuest/orchestrator/pull/38",
+        head_sha="cd1f0659",
+        verification=[
+            {"command": "uv lock --upgrade", "exit_code": 0, "summary": "passed"},
+            {"command": "uv sync", "exit_code": 0, "summary": "passed"},
+            {"command": "uv lock --check", "exit_code": 0, "summary": "passed"},
+        ],
+        **_COMMON,
+    )
+    assert payload["evidence_type"] == "runner.pr.opened"
+    assert payload["payload"]["pr_url"].endswith("/pull/38")
+    commands = payload["payload"]["verification"]
+    assert [c["command"] for c in commands] == ["uv lock --upgrade", "uv sync", "uv lock --check"]
+    # required EvidenceCommand fields still present
+    assert set(_contract()["EvidenceCommand"]["required"]) <= set(payload)
+
+
+def test_pr_evidence_omits_verification_key_when_none() -> None:
+    payload = build_pr_opened_evidence(
+        context_snapshot_id=None,
+        idempotency_key="k",
+        pr_url="https://example.invalid/pr/1",
+        head_sha="cd1f0659",
+        verification=None,
+        **_COMMON,
+    )
+    assert "verification" not in payload["payload"]
