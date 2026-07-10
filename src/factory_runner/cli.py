@@ -179,6 +179,11 @@ def _save_run(workspace_dir: str, run: dict[str, Any]) -> None:
     _write_json(_workspace_path(workspace_dir) / "run.json", run)
 
 
+def _optional_str(value: object) -> str | None:
+    """`str(None)` is the string "None", which no UUID field will accept."""
+    return None if value is None else str(value)
+
+
 def _command_parts(command: str) -> list[str]:
     return command.split()
 
@@ -531,35 +536,47 @@ def _finalize_workspace(
     ).strip()
 
     ac_id = _first_ac_id(brief)
+    expected_version = int(run["submit_expected_version"])
+    context_snapshot_id = _optional_str(run.get("context_snapshot_id"))
     common = {
         "revision_id": str(run["package_revision_id"]),
         "ac_id": ac_id,
         "attempt": attempt,
         "lease_token": str(run["lease_token"]),
         "source_revision": head_sha,
-        "context_snapshot_id": str(run["context_snapshot_id"]),
+        "context_snapshot_id": context_snapshot_id,
+        "expected_version": expected_version,
     }
     evidence_refs: list[str] = []
     pr_evidence = client.submit_evidence(
         work_unit_id,
-        build_pr_opened_evidence(pr_url=pr_url, head_sha=head_sha, **common),
+        build_pr_opened_evidence(
+            pr_url=pr_url,
+            head_sha=head_sha,
+            idempotency_key=f"factory-runner:{work_unit_id}:evidence:pr:a{attempt}",
+            **common,
+        ),
     )
     evidence_refs.append(str(pr_evidence.get("id", pr_url)))
     if verification_payloads:
         verification_evidence = client.submit_evidence(
             work_unit_id,
-            build_verification_evidence(commands=verification_payloads, **common),
+            build_verification_evidence(
+                commands=verification_payloads,
+                idempotency_key=f"factory-runner:{work_unit_id}:evidence:verification:a{attempt}",
+                **common,
+            ),
         )
         evidence_refs.append(str(verification_evidence.get("id", "verification")))
 
     client.submit(
         work_unit_id,
         {
-            "expected_version": int(run["submit_expected_version"]),
+            "expected_version": expected_version,
             "idempotency_key": f"factory-runner:{work_unit_id}:submit:a{attempt}",
             "attempt": attempt,
             "lease_token": str(run["lease_token"]),
-            "context_snapshot_id": str(run["context_snapshot_id"]),
+            "context_snapshot_id": context_snapshot_id,
         },
     )
     typer.echo(f"{success_prefix} {work_unit_id}: {pr_url}")
