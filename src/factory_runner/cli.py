@@ -120,6 +120,25 @@ def _write_github_output(**values: str) -> None:
             output.write(f"{key}={value}\n")
 
 
+# The coding action writes its full execution transcript to `output.txt` in the
+# checkout. Anything untracked inside the checkout makes `git status --porcelain`
+# non-empty, which defeats the "no changes to submit" guard and lets `git add -A`
+# sweep the artifact into the pull request. `.git/info/exclude` is local to the
+# checkout and never committed, so this hides the artifact without touching the
+# repository's own .gitignore.
+_AGENT_ARTIFACTS = ("output.txt", ".factory-runner/")
+
+
+def _exclude_agent_artifacts(repo_root: Path) -> None:
+    exclude = Path(repo_root) / ".git" / "info" / "exclude"
+    if not exclude.parent.is_dir():
+        return
+    existing = exclude.read_text() if exclude.exists() else ""
+    missing = [p for p in _AGENT_ARTIFACTS if p not in existing]
+    if missing:
+        exclude.write_text(existing.rstrip("\n") + "\n" + "\n".join(missing) + "\n")
+
+
 _GIT_AUTHOR_NAME = "factory-runner"
 _GIT_AUTHOR_EMAIL = "factory-runner@users.noreply.github.com"
 
@@ -127,12 +146,18 @@ _GIT_AUTHOR_EMAIL = "factory-runner@users.noreply.github.com"
 def _run_command(command: list[str], **kwargs: Any) -> str:
     completed = subprocess.run(
         command,
-        check=True,
+        check=False,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         **kwargs,
     )
+    if completed.returncode != 0:
+        # The output was captured and then thrown away, so a `gh pr create` failure
+        # reached the log as a bare CalledProcessError with no reason.
+        raise RuntimeError(
+            f"command failed ({completed.returncode}): {' '.join(command)}\n{completed.stdout}"
+        )
     return completed.stdout
 
 
@@ -281,6 +306,7 @@ def prepare_run(
     current_repository: Annotated[str, typer.Option()],
     workspace_dir: Annotated[str, typer.Option()] = ".factory-runner",
 ) -> None:
+    _exclude_agent_artifacts(Path.cwd())
     client = _client(orchestrator_url, credential_key_id)
     brief = client.get_runner_brief(work_unit_id)
     permissions = validate_authority(
@@ -474,7 +500,6 @@ def _finalize_workspace(
             "gh",
             "pr",
             "create",
-            "--draft",
             "--title",
             f"SDS {brief.work_unit.id}: {brief.work_unit.title}",
             "--body",

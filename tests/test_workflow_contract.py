@@ -90,3 +90,15 @@ def test_the_workspace_lives_outside_the_repository_checkout() -> None:
 
     assert "--workspace-dir" in runs
     assert "RUNNER_TEMP" in runs
+
+
+def test_the_turn_budget_is_large_enough_to_finish_a_change() -> None:
+    """max_turns 10 exhausted itself on exploration and committed nothing.
+
+    NOTE: the approved authority envelope carries `budgets.max_llm_calls`, which this
+    runner does not yet read. Until it does, this literal is the effective budget and
+    the envelope's value is not enforced. Recorded as a named gap, not hidden.
+    """
+    step = _coding_step()
+
+    assert int(step["with"]["max_turns"]) >= 30

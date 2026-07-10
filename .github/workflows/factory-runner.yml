@@ -79,7 +79,10 @@ jobs:
           prompt_file: ${{ steps.prepare.outputs.prompt_file }}
           allowed_tools: ${{ steps.prepare.outputs.allowed_tools }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          max_turns: "10"
+          # The approved authority envelope carries budgets.max_llm_calls, which the
+          # runner does not yet read. Until it does, this literal is the effective
+          # budget. 10 exhausted itself on exploration and committed nothing.
+          max_turns: "40"
 
       # Only meaningful once prepare has claimed the unit. Without this guard an
       # earlier failure runs finalize against an unclaimed unit, burying the real
