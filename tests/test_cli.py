@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from typer.testing import CliRunner
@@ -293,7 +294,13 @@ def test_finalize_run_commits_pr_evidence_and_submits(tmp_path: Path) -> None:
     commit_message = "\n".join(commit_commands[0])
     assert "SDS-Unit: unit-1" in commit_message
     assert "SDS-Package-Rev: 1" in commit_message
-    assert any(name == "evidence" for name, _item in calls)
+    # Exactly one evidence submission: the orchestrator keys current evidence on ac_id, so
+    # a second row for the same AC is a 409. Verification rides inside the PR payload.
+    evidence_calls = [item for name, item in calls if name == "evidence"]
+    assert len(evidence_calls) == 1, f"expected one evidence submission, got {len(evidence_calls)}"
+    evidence_payload = cast("tuple[str, dict[str, Any]]", evidence_calls[0])[1]
+    assert evidence_payload["evidence_type"] == "runner.pr.opened"
+    assert "verification" in evidence_payload["payload"]
     assert calls[-1][0] == "submit"
 
 

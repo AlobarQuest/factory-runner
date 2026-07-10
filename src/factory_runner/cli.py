@@ -11,7 +11,7 @@ import typer
 
 from factory_runner.authority import validate_authority
 from factory_runner.client import OrchestratorClient
-from factory_runner.evidence import build_pr_opened_evidence, build_verification_evidence
+from factory_runner.evidence import build_pr_opened_evidence
 from factory_runner.models import RunnerBrief
 from factory_runner.pr_body import render_pr_body
 
@@ -558,27 +558,22 @@ def _finalize_workspace(
         "context_snapshot_id": context_snapshot_id,
         "expected_version": expected_version,
     }
+    # One evidence per (revision, unit, ac): the orchestrator keys current evidence on
+    # ac_id alone, so a second submission for the same AC is rejected with
+    # evidence_already_exists. The verification results ride inside the PR evidence payload
+    # rather than as a separate row.
     evidence_refs: list[str] = []
     pr_evidence = client.submit_evidence(
         work_unit_id,
         build_pr_opened_evidence(
             pr_url=pr_url,
             head_sha=head_sha,
+            verification=verification_payloads,
             idempotency_key=f"factory-runner:{work_unit_id}:evidence:pr:a{attempt}",
             **common,
         ),
     )
     evidence_refs.append(str(pr_evidence.get("id", pr_url)))
-    if verification_payloads:
-        verification_evidence = client.submit_evidence(
-            work_unit_id,
-            build_verification_evidence(
-                commands=verification_payloads,
-                idempotency_key=f"factory-runner:{work_unit_id}:evidence:verification:a{attempt}",
-                **common,
-            ),
-        )
-        evidence_refs.append(str(verification_evidence.get("id", "verification")))
 
     client.submit(
         work_unit_id,

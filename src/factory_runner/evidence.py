@@ -63,7 +63,16 @@ def build_pr_opened_evidence(
     expected_version: int,
     pr_url: str,
     head_sha: str,
+    verification: list[dict[str, object]] | None = None,
 ) -> dict[str, Any]:
+    # The orchestrator keys current evidence on (revision, unit, ac_id) with no
+    # evidence_type dimension, so a unit mapped to one AC gets exactly one evidence row.
+    # The verification commands ride in this payload rather than as a second submission.
+    payload: dict[str, Any] = {"pr_url": pr_url, "head_sha": head_sha}
+    if verification:
+        payload["verification"] = [
+            build_verification_command_payload(command) for command in verification
+        ]
     return _base(
         revision_id=revision_id,
         ac_id=ac_id,
@@ -75,7 +84,7 @@ def build_pr_opened_evidence(
         expected_version=expected_version,
         evidence_type="runner.pr.opened",
         stable_ref=pr_url,
-        payload={"pr_url": pr_url, "head_sha": head_sha},
+        payload=payload,
     )
 
 
