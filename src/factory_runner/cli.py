@@ -561,7 +561,10 @@ def _finalize_workspace(
     # One evidence per (revision, unit, ac): the orchestrator keys current evidence on
     # ac_id alone, so a second submission for the same AC is rejected with
     # evidence_already_exists. The verification results ride inside the PR evidence payload
-    # rather than as a separate row.
+    # rather than as a separate row. A retry after a partial-success earlier attempt must
+    # supersede the row that attempt left behind, so ask the orchestrator whether any
+    # evidence already exists for this AC.
+    supersede = any(item.get("ac_id") == ac_id for item in client.list_evidence(work_unit_id))
     evidence_refs: list[str] = []
     pr_evidence = client.submit_evidence(
         work_unit_id,
@@ -569,6 +572,7 @@ def _finalize_workspace(
             pr_url=pr_url,
             head_sha=head_sha,
             verification=verification_payloads,
+            supersede=supersede,
             idempotency_key=f"factory-runner:{work_unit_id}:evidence:pr:a{attempt}",
             **common,
         ),
