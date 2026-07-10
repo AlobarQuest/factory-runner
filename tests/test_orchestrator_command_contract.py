@@ -19,7 +19,7 @@ from pathlib import Path
 from factory_runner.evidence import build_pr_opened_evidence, build_verification_evidence
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "orchestrator_command_contract.json"
-CONTRACT_SHA256 = "50d2a83defd53b6adb02ab71c216705496172fa78e6ab013652b3351e656f83c"
+CONTRACT_SHA256 = "15911dbbf9a0fd4dcd57cfecfc4b282f7fdee96285acbd5f5684c0ec7c161dae"
 
 _COMMON = {
     "revision_id": "3f242a84-deaf-4cbd-bb66-1870235c6411",
@@ -157,3 +157,37 @@ def test_pr_evidence_omits_verification_key_when_none() -> None:
         **_COMMON,
     )
     assert "verification" not in payload["payload"]
+
+
+def test_pr_evidence_carries_supersede_flag() -> None:
+    """A retry sets supersede=True so the orchestrator supersedes the current evidence for
+    the AC rather than rejecting a first-write with evidence_already_exists."""
+    first = build_pr_opened_evidence(
+        context_snapshot_id=None,
+        idempotency_key="k1",
+        pr_url="https://example.invalid/pr/1",
+        head_sha="cd1f0659",
+        supersede=False,
+        **_COMMON,
+    )
+    retry = build_pr_opened_evidence(
+        context_snapshot_id=None,
+        idempotency_key="k2",
+        pr_url="https://example.invalid/pr/1",
+        head_sha="cd1f0659",
+        supersede=True,
+        **_COMMON,
+    )
+    assert first["supersede"] is False
+    assert retry["supersede"] is True
+
+
+def test_supersede_defaults_false_for_a_first_attempt() -> None:
+    payload = build_pr_opened_evidence(
+        context_snapshot_id=None,
+        idempotency_key="k",
+        pr_url="https://example.invalid/pr/1",
+        head_sha="cd1f0659",
+        **_COMMON,
+    )
+    assert payload["supersede"] is False

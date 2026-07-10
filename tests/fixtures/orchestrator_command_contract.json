@@ -3,7 +3,8 @@
     "optional": [
       "context_snapshot_id",
       "payload",
-      "stable_ref"
+      "stable_ref",
+      "supersede"
     ],
     "required": [
       "ac_id",

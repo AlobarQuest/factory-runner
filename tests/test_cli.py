@@ -242,6 +242,10 @@ def test_finalize_run_commits_pr_evidence_and_submits(tmp_path: Path) -> None:
         def __init__(self, *, base_url: str, credential_key_id: str, token: str) -> None:
             calls.append(("init", (base_url, credential_key_id, token)))
 
+        def list_evidence(self, unit_id: str) -> list[dict[str, object]]:
+            calls.append(("list_evidence", unit_id))
+            return []
+
         def submit_evidence(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
             calls.append(("evidence", (unit_id, payload)))
             return {"id": f"evidence-{len(calls)}"}
@@ -301,7 +305,87 @@ def test_finalize_run_commits_pr_evidence_and_submits(tmp_path: Path) -> None:
     evidence_payload = cast("tuple[str, dict[str, Any]]", evidence_calls[0])[1]
     assert evidence_payload["evidence_type"] == "runner.pr.opened"
     assert "verification" in evidence_payload["payload"]
+    # No prior evidence (list_evidence -> []), so this is a first-write, not a supersede.
+    assert evidence_payload["supersede"] is False
+    assert any(name == "list_evidence" for name, _ in calls)
     assert calls[-1][0] == "submit"
+
+
+def test_finalize_run_supersedes_when_prior_evidence_exists(tmp_path: Path) -> None:
+    """A retry after a partial-success earlier attempt must supersede the evidence that
+    attempt left behind, or the orchestrator rejects the re-post with evidence_already_exists.
+    """
+    from factory_runner.cli import _first_ac_id
+
+    brief = _runner_brief()
+    ac_id = _first_ac_id(brief)
+    (tmp_path / "brief.json").write_text(brief.model_dump_json())
+    (tmp_path / "run.json").write_text(
+        json.dumps(
+            {
+                "attempt": 2,
+                "claim_id": "claim-2",
+                "context_snapshot_id": "snapshot-1",
+                "lease_token": "lease-redacted",
+                "package_revision_id": "rev-1",
+                "submit_expected_version": 9,
+                "verification_commands": ["make check"],
+                "work_unit_id": "unit-1",
+            }
+        )
+    )
+    submitted: dict[str, Any] = {}
+
+    class FakeClient:
+        def __init__(self, **_: object) -> None: ...
+
+        def list_evidence(self, unit_id: str) -> list[dict[str, object]]:
+            # A row from a prior attempt, same AC.
+            return [{"id": "prior", "ac_id": ac_id, "evidence_type": "runner.pr.opened"}]
+
+        def submit_evidence(self, unit_id: str, payload: dict[str, Any]) -> dict[str, object]:
+            submitted.update(payload)
+            return {"id": "evidence-2"}
+
+        def submit(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
+            return {"unit_id": unit_id, "state": "submitted", "version": 10}
+
+    def fake_run(command: list[str], **_kwargs: object) -> str:
+        if command[:3] == ["git", "status", "--porcelain"]:
+            return " M uv.lock\n"
+        if command[:3] == ["git", "rev-parse", "HEAD"]:
+            return "def456\n"
+        if command[:3] == ["gh", "pr", "create"]:
+            return "https://github.com/AlobarQuest/orchestrator/pull/100\n"
+        return ""
+
+    from factory_runner import cli as cli_module
+
+    original_client, original_run = cli_module.OrchestratorClient, cli_module._run_command
+    cli_module.OrchestratorClient = FakeClient
+    cli_module._run_command = fake_run
+    try:
+        result = CliRunner().invoke(
+            app,
+            [
+                "finalize-run",
+                "--orchestrator-url",
+                "https://sds.alobar.net",
+                "--credential-key-id",
+                "factory-runner-github",
+                "--work-unit-id",
+                "unit-1",
+                "--workspace-dir",
+                str(tmp_path),
+            ],
+            env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+        )
+    finally:
+        cli_module.OrchestratorClient = original_client
+        cli_module._run_command = original_run
+
+    assert result.exit_code == 0, result.output
+    assert submitted["supersede"] is True
 
 
 def test_local_heavy_prepare_writes_sanitized_workspace(tmp_path: Path) -> None:
@@ -564,6 +648,10 @@ def test_local_heavy_finalize_submits_evidence_without_leaking_lease(tmp_path: P
         def __init__(self, *, base_url: str, credential_key_id: str, token: str) -> None:
             calls.append(("init", (base_url, credential_key_id, token)))
 
+        def list_evidence(self, unit_id: str) -> list[dict[str, object]]:
+            calls.append(("list_evidence", unit_id))
+            return []
+
         def submit_evidence(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
             calls.append(("evidence", (unit_id, payload)))
             return {"id": f"evidence-{len(calls)}"}
@@ -650,6 +738,9 @@ def test_commit_carries_an_explicit_git_identity(tmp_path: Path) -> None:
 
     class FakeClient:
         def __init__(self, **_: object) -> None: ...
+
+        def list_evidence(self, unit_id: str) -> list[dict[str, object]]:
+            return []
 
         def submit_evidence(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
             return {"id": "evidence-1"}

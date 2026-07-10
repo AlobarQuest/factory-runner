@@ -145,6 +145,10 @@ class OrchestratorClient:
         response = self._request("POST", f"/api/v1/work-units/{unit_id}/evidence", json=payload)
         return response.json()
 
+    def list_evidence(self, unit_id: str) -> list[dict[str, Any]]:
+        response = self._request("GET", f"/api/v1/work-units/{unit_id}/evidence")
+        return response.json()
+
     def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         response = self._client.request(method, path, **kwargs)
         if response.status_code == 401:

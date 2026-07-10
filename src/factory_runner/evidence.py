@@ -30,6 +30,7 @@ def _base(
     evidence_type: str,
     stable_ref: str | None,
     payload: dict[str, Any],
+    supersede: bool = False,
 ) -> dict[str, Any]:
     # The orchestrator's EvidenceCommand extends CommandBase, so idempotency_key and
     # expected_version are required. Omitting them made every evidence submission a 422 --
@@ -48,6 +49,8 @@ def _base(
         "context_snapshot_id": context_snapshot_id,
         "idempotency_key": idempotency_key,
         "expected_version": expected_version,
+        # A retry supersedes the current evidence for this AC rather than first-writing.
+        "supersede": supersede,
     }
 
 
@@ -64,6 +67,7 @@ def build_pr_opened_evidence(
     pr_url: str,
     head_sha: str,
     verification: list[dict[str, object]] | None = None,
+    supersede: bool = False,
 ) -> dict[str, Any]:
     # The orchestrator keys current evidence on (revision, unit, ac_id) with no
     # evidence_type dimension, so a unit mapped to one AC gets exactly one evidence row.
@@ -85,6 +89,7 @@ def build_pr_opened_evidence(
         evidence_type="runner.pr.opened",
         stable_ref=pr_url,
         payload=payload,
+        supersede=supersede,
     )
 
 
