@@ -3,6 +3,12 @@ project: factory-runner
 foundation: false
 status: ws43-local-heavy-merged
 owner: Devon
+name: factory-runner
+tier: active
+purpose: 'TODO: one-line purpose'
+version: 0.1.0
+version_source: pyproject
+updated: '2026-07-10'
 ---
 
 # Factory Runner
@@ -66,3 +72,8 @@ make check
 | Target repo | State | Notes |
 |---|---|---|
 | `AlobarQuest/orchestrator` | merged, credentialed, not dispatched | First pilot target after approved work unit. |
+
+## Backlog
+- [ ] (P1) `finalize-run` hardcodes exit_code: 0 and summary '<cmd>: passed' into the evidence payload for every entry in verification_commands (cli.py ~455-470). It is only truthful because _run_command raises first, and it labels mutators as verifications — the WS-5.1 verifier adjudicates evidence reading 'uv lock --upgrade: passed'. Record the real exit code and distinguish mutators from verifiers. — added 2026-07-10
+- [ ] (1) Add CI to factory-runner: it has no workflow at all, yet every repo consumes its reusable workflow via uses: ...@main. A broken main breaks every consumer's factory runs with nothing to catch it. Two such bugs (private-repo install, missing ./scripts wrapper) shipped undetected and blocked WS-6.4 until 2026-07-09. — added 2026-07-10
+- [ ] (2) Pin the runner version: callers use 'uses: ...@main' and the workflow installs 'git+...@main', both unpinned. Tagged releases would make the runner version part of the evidence trail and stop a main push instantly changing every consumer's behavior. — added 2026-07-10
