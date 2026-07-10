@@ -5,6 +5,36 @@ import httpx
 from factory_runner.models import RunnerBrief
 
 
+def _describe_error(response: httpx.Response) -> str:
+    """Summarize an error response WITHOUT echoing the values we submitted.
+
+    A discarded body is why a 422 read as an opaque number for two production runs. But
+    FastAPI's 422 detail carries an `input` field holding the exact value that failed
+    validation -- for this runner that includes the lease token. Report each failure's
+    `loc` and `msg` only; never `input`, never `ctx`.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return "(unparseable body)"
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict) and error.get("code"):
+            return f"{error['code']}: {error.get('message', '')}".strip()
+        detail = body.get("detail")
+        if isinstance(detail, list):
+            parts = [
+                f"{'.'.join(str(x) for x in item.get('loc', []))}: {item.get('msg', '')}"
+                for item in detail
+                if isinstance(item, dict)
+            ]
+            if parts:
+                return "; ".join(parts)
+        if isinstance(detail, str):
+            return detail
+    return "(no error detail)"
+
+
 class OrchestratorError(RuntimeError):
     pass
 
@@ -120,5 +150,7 @@ class OrchestratorClient:
         if response.status_code == 401:
             raise OrchestratorAuthError("orchestrator authentication failed")
         if response.status_code >= 400:
-            raise OrchestratorError(f"orchestrator request failed: {response.status_code}")
+            raise OrchestratorError(
+                f"orchestrator request failed: {response.status_code} {_describe_error(response)}"
+            )
         return response
