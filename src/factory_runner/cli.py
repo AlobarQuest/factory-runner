@@ -100,14 +100,21 @@ Authority fingerprint: {brief.authority.fingerprint}
 Acceptance criteria:
 {criteria or "- No unit-mapped acceptance criteria were supplied."}
 
-Allowed verification commands:
+Authorized commands, in order:
 {commands}
 
-Do not merge pull requests. Do not deploy. Do not read or expose secrets.
+This list bounds every command you may run. It is not merely a list of checks:
+it contains the mutations this outcome requires. The runner re-executes this
+exact list, in this order, after you finish and before it commits, so each
+command must still succeed when run a second time against the same checkout.
 
-When committing, include these trailers exactly:
-SDS-Unit: {brief.work_unit.id}
-SDS-Package-Rev: {brief.package.revision}
+Leave your changes UNCOMMITTED in the working tree. The runner creates the
+branch, stages the changes, writes the commit and its required trailers, pushes,
+and opens the pull request. Do not run `git commit`, `git branch`, `git checkout`,
+`git push`, or `gh pr create` — committing your own work makes the tree clean and
+the runner will refuse to submit it.
+
+Do not merge pull requests. Do not deploy. Do not read or expose secrets.
 """
 
 
@@ -258,6 +265,10 @@ def _prepare_claimed_workspace(
         workspace / "run.json",
         {
             "attempt": attempt,
+            # The commit the agent starts from. finalize compares HEAD against it to tell
+            # "the agent changed nothing" apart from "the agent committed its own work",
+            # which leave an identically clean `git status` behind.
+            "base_sha": _run_command(["git", "rev-parse", "HEAD"]).strip(),
             "claim_id": claim["claim_id"],
             "context_snapshot_id": context_snapshot_id,
             "lease_expires_at": claim.get("expires_at"),
@@ -471,6 +482,18 @@ def _finalize_workspace(
 
     status = _run_command(["git", "status", "--porcelain"])
     if not status.strip():
+        # A clean tree has two causes that used to report identically. If HEAD moved, the
+        # agent committed its own work — the runner owns branching and committing, so this
+        # is a contract violation, not an empty diff.
+        base_sha = run.get("base_sha")
+        head_sha = _run_command(["git", "rev-parse", "HEAD"]).strip()
+        if base_sha and head_sha != base_sha:
+            typer.echo(
+                f"agent committed its own work ({base_sha[:8]}..{head_sha[:8]}); "
+                "the runner owns branching, committing, and the pull request",
+                err=True,
+            )
+            raise typer.Exit(code=1)
         typer.echo("no changes to submit", err=True)
         raise typer.Exit(code=1)
 
