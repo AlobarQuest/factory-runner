@@ -202,13 +202,17 @@ def test_prepare_run_claims_starts_and_writes_workspace(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert (tmp_path / "brief.json").exists()
     prompt = (tmp_path / "prompt.md").read_text()
-    assert "SDS-Unit: unit-1" in prompt
-    assert "SDS-Package-Rev: 1" in prompt
+    assert "Work unit: unit-1" in prompt
+    assert "Package: pkg revision 1" in prompt
+    # The trailers belong to the runner's own commit, not to the agent's. Asking the agent
+    # for them told it to commit, which left a clean tree finalize refused to submit.
+    assert "SDS-Unit: unit-1" not in prompt
     assert "redacted-token" not in prompt
     manifest = json.loads((tmp_path / "run.json").read_text())
     assert manifest["attempt"] == 1
     assert manifest["lease_token"] == "lease-redacted"
     assert manifest["submit_expected_version"] == 5
+    assert manifest["base_sha"]
     assert calls[1][0] == "brief"
     assert calls[2][0] == "claim"
     assert calls[3][0] == "start"
@@ -734,3 +738,103 @@ def test_prepare_hides_agent_artifacts_from_git(tmp_path: Path) -> None:
     # The helper is worthless unless prepare_run actually calls it, before the coding
     # action runs and writes output.txt.
     assert "_exclude_agent_artifacts(" in inspect.getsource(cli_module.prepare_run)
+
+
+def _finalize_with_clean_tree(tmp_path: Path, *, base_sha: str | None, head_sha: str):
+    """finalize-run against a working tree with nothing uncommitted."""
+    brief = _runner_brief()
+    (tmp_path / "brief.json").write_text(brief.model_dump_json())
+    run: dict[str, object] = {
+        "attempt": 1,
+        "claim_id": "claim-1",
+        "context_snapshot_id": "snapshot-1",
+        "lease_token": "lease-redacted",
+        "package_revision_id": "rev-1",
+        "submit_expected_version": 5,
+        "verification_commands": ["make check"],
+        "work_unit_id": "unit-1",
+    }
+    if base_sha is not None:
+        run["base_sha"] = base_sha
+    (tmp_path / "run.json").write_text(json.dumps(run))
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None: ...
+
+    def fake_run(command: list[str], **_kwargs: object) -> str:
+        if command[:3] == ["git", "status", "--porcelain"]:
+            return ""
+        if command[:3] == ["git", "rev-parse", "HEAD"]:
+            return f"{head_sha}\n"
+        return ""
+
+    from factory_runner import cli as cli_module
+
+    original_client, original_run = cli_module.OrchestratorClient, cli_module._run_command
+    cli_module.OrchestratorClient = FakeClient
+    cli_module._run_command = fake_run
+    try:
+        return CliRunner().invoke(
+            app,
+            [
+                "finalize-run",
+                "--orchestrator-url",
+                "https://sds.alobar.net",
+                "--credential-key-id",
+                "factory-runner-github",
+                "--work-unit-id",
+                "unit-1",
+                "--workspace-dir",
+                str(tmp_path),
+            ],
+            env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+        )
+    finally:
+        cli_module.OrchestratorClient = original_client
+        cli_module._run_command = original_run
+
+
+def test_finalize_run_reports_agent_commit_distinctly_from_empty_diff(tmp_path: Path) -> None:
+    """An agent that commits its own work leaves a tree as clean as one that changed nothing.
+
+    Reporting both as "no changes to submit" sent WS-6.4's canary diagnosis at the envelope
+    when the defect was in the runner's own prompt.
+    """
+    result = _finalize_with_clean_tree(tmp_path, base_sha="aaaa1111", head_sha="bbbb2222")
+    assert result.exit_code == 1
+    assert "agent committed its own work" in result.output
+    assert "aaaa1111..bbbb2222" in result.output
+    assert "no changes to submit" not in result.output
+
+
+def test_finalize_run_reports_empty_diff_when_head_is_unmoved(tmp_path: Path) -> None:
+    result = _finalize_with_clean_tree(tmp_path, base_sha="aaaa1111", head_sha="aaaa1111")
+    assert result.exit_code == 1
+    assert "no changes to submit" in result.output
+    assert "agent committed" not in result.output
+
+
+def test_finalize_run_falls_back_when_base_sha_absent(tmp_path: Path) -> None:
+    """Workspaces written before base_sha existed must still report the empty-diff guard."""
+    result = _finalize_with_clean_tree(tmp_path, base_sha=None, head_sha="bbbb2222")
+    assert result.exit_code == 1
+    assert "no changes to submit" in result.output
+
+
+def test_prompt_forbids_committing_and_states_the_runner_contract() -> None:
+    from factory_runner.cli import _prompt
+
+    prompt = _prompt(_runner_brief(), ("uv lock --upgrade", "uv sync", "make check"))
+
+    # The runner writes the commit and its trailers; instructing the agent to commit
+    # leaves a clean tree and finalize refuses to submit it.
+    assert "When committing" not in prompt
+    assert "UNCOMMITTED" in prompt
+    assert "`git commit`" in prompt
+    assert "gh pr create" in prompt
+
+    # allowed_commands carries mutators and is re-executed in order before the commit.
+    assert "Allowed verification commands" not in prompt
+    assert "Authorized commands, in order:" in prompt
+    assert "re-executes this" in prompt
+    assert "uv lock --upgrade" in prompt
