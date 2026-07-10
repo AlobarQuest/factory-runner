@@ -180,8 +180,16 @@ def _save_run(workspace_dir: str, run: dict[str, Any]) -> None:
 
 
 def _optional_str(value: object) -> str | None:
-    """`str(None)` is the string "None", which no UUID field will accept."""
-    return None if value is None else str(value)
+    """Coerce an optional identifier to a string or None for a `UUID | None` field.
+
+    Both `None` (-> the string "None") and "" (-> a zero-length UUID) are rejected by the
+    orchestrator. A claim without a snapshot yields one or the other depending on the code
+    path, so an absent value must always collapse to None here.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _command_parts(command: str) -> list[str]:
@@ -247,7 +255,10 @@ def _prepare_claimed_workspace(
         standing_context=brief.standing_context,
     )
     attempt = int(claim["attempt"])
-    context_snapshot_id = str(claim.get("context_snapshot_id") or "")
+    # A claim without a snapshot must become None, not "". The empty string is not a valid
+    # UUID, and it flows unchanged into run.json and then into the evidence payload, where
+    # the orchestrator's `context_snapshot_id: UUID | None` rejects it with a 422.
+    context_snapshot_id = _optional_str(claim.get("context_snapshot_id"))
     lease_token = str(claim["lease_token"])
     start = client.start(
         work_unit_id,
@@ -257,7 +268,7 @@ def _prepare_claimed_workspace(
             "attempt": attempt,
             "lease_token": lease_token,
             "standing_context": brief.standing_context,
-            "context_snapshot_id": context_snapshot_id or None,
+            "context_snapshot_id": context_snapshot_id,
         },
     )
 
@@ -425,7 +436,7 @@ def local_heavy_reclaim(
         standing_context=brief.standing_context,
     )
     attempt = int(grant["attempt"])
-    context_snapshot_id = str(grant.get("context_snapshot_id") or "")
+    context_snapshot_id = _optional_str(grant.get("context_snapshot_id"))
     workspace = _workspace_path(workspace_dir)
     _write_json(workspace / "brief.json", _sanitize_runner_brief(brief))
     (workspace / "prompt.md").write_text(
