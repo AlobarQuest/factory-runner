@@ -28,6 +28,8 @@ name: Factory Runner
         required: true
       ANTHROPIC_API_KEY:
         required: true
+      FACTORY_PR_TOKEN:
+        required: true
 
 permissions:
   contents: write
@@ -47,6 +49,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: true
+          # PR-author identity so pushes/PRs trigger target-repo CI (not gated like GITHUB_TOKEN)
+          token: ${{ secrets.FACTORY_PR_TOKEN }}
 
       - uses: astral-sh/setup-uv@v5
 
@@ -92,7 +96,7 @@ jobs:
         env:
           FACTORY_RUNNER_TOKEN: ${{ secrets.FACTORY_RUNNER_TOKEN }}
           FACTORY_RUNNER_CREDENTIAL_KEY_ID: ${{ secrets.FACTORY_RUNNER_CREDENTIAL_KEY_ID }}
-          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.FACTORY_PR_TOKEN }}
         run: |
           factory-runner finalize-run \
             --orchestrator-url "$ORCHESTRATOR_URL" \
