@@ -13,6 +13,11 @@ import typer
 
 from factory_runner.authority import validate_authority
 from factory_runner.client import FailureReason, OrchestratorClient
+from factory_runner.coding_result import (
+    CodingResultError,
+    classify_execution_file,
+    verify_install_revision,
+)
 from factory_runner.command_policy import (
     authorize_tool,
     policy_digest,
@@ -48,6 +53,31 @@ def authorize_tool_command(
     if not allowed:
         typer.echo(reason, err=True)
         raise typer.Exit(code=2)
+
+
+@app.command("classify-coding-result")
+def classify_coding_result_command(
+    execution_file: Annotated[Path, typer.Option()],
+) -> None:
+    """Require an unambiguous successful terminal coding result."""
+    try:
+        result = classify_execution_file(execution_file)
+    except CodingResultError:
+        typer.echo("coding result rejected", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(f"coding result accepted: {result.subtype}")
+
+
+@app.command("verify-install-revision")
+def verify_install_revision_command(
+    expected: Annotated[str, typer.Option()],
+) -> None:
+    """Verify the installed factory-runner distribution has the expected VCS commit."""
+    try:
+        verify_install_revision(expected)
+    except CodingResultError:
+        typer.echo("factory runner revision verification failed", err=True)
+        raise typer.Exit(code=1) from None
 
 
 def _sanitize_runner_brief(brief: RunnerBrief) -> dict[str, Any]:
