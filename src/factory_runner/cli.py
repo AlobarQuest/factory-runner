@@ -529,6 +529,9 @@ def local_heavy_reclaim(
         target_repo=brief.target.repository,
         current_repo=current_repository,
     )
+    if not permissions.can_claim:
+        typer.echo("authority does not allow orchestrator claim", err=True)
+        raise typer.Exit(code=1)
     workspace = _workspace_path(workspace_dir)
     try:
         policy_path, settings_path = write_tool_policy(

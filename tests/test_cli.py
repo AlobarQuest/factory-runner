@@ -1287,6 +1287,87 @@ def test_local_heavy_reclaim_uses_orchestrator_reclaim_api(tmp_path: Path) -> No
     )
 
 
+def test_local_heavy_reclaim_requires_claim_authority_before_policy_or_api(
+    tmp_path: Path,
+) -> None:
+    brief = _runner_brief()
+    brief.authority.envelope.capabilities["orchestrator.claim"] = "prohibited"
+    calls: list[tuple[str, object]] = []
+
+    class FakeClient:
+        def __init__(self, *, base_url: str, credential_key_id: str, token: str) -> None:
+            calls.append(("init", (base_url, credential_key_id, token)))
+
+        def get_runner_brief(self, unit_id: str) -> RunnerBrief:
+            calls.append(("brief", unit_id))
+            return brief
+
+        def reclaim_expired_claim(
+            self,
+            unit_id: str,
+            *,
+            next_owner_id: str,
+            idempotency_key: str,
+            expected_version: int | None = None,
+            standing_context: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append(
+                (
+                    "reclaim",
+                    (unit_id, next_owner_id, idempotency_key, expected_version, standing_context),
+                )
+            )
+            raise AssertionError("reclaim API must not be called without claim authority")
+
+    from factory_runner import cli as cli_module
+
+    def fail_write_tool_policy(*args: object, **kwargs: object) -> tuple[Path, Path]:
+        calls.append(("policy", (args, kwargs)))
+        raise AssertionError("tool policy must not be generated without claim authority")
+
+    original_client = cli_module.OrchestratorClient
+    original_write_tool_policy = cli_module.write_tool_policy
+    cli_module.OrchestratorClient = FakeClient
+    cli_module.write_tool_policy = fail_write_tool_policy
+    try:
+        result = CliRunner().invoke(
+            app,
+            [
+                "local-heavy-reclaim",
+                "--orchestrator-url",
+                "https://sds.alobar.net",
+                "--credential-key-id",
+                "factory-runner-github",
+                "--work-unit-id",
+                "unit-1",
+                "--current-repository",
+                "AlobarQuest/orchestrator",
+                "--workspace-dir",
+                str(tmp_path),
+                "--next-owner-id",
+                "factory-runner",
+                "--idempotency-key",
+                "local-heavy:unit-1:reclaim",
+            ],
+            env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+        )
+    finally:
+        cli_module.OrchestratorClient = original_client
+        cli_module.write_tool_policy = original_write_tool_policy
+
+    assert result.exit_code == 1
+    assert result.stderr == "authority does not allow orchestrator claim\n"
+    assert len(result.stderr) < 200
+    assert calls == [
+        (
+            "init",
+            ("https://sds.alobar.net", "factory-runner-github", "redacted-token"),
+        ),
+        ("brief", "unit-1"),
+    ]
+    assert not (tmp_path / "tool-policy").exists()
+
+
 def test_local_heavy_finalize_submits_evidence_without_leaking_lease(tmp_path: Path) -> None:
     brief = _runner_brief()
     (tmp_path / "brief.json").write_text(brief.model_dump_json())
