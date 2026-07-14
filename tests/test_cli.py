@@ -47,6 +47,7 @@ def _runner_brief() -> RunnerBrief:
                         "work_unit_id": "unit-1",
                         "target_repository": "AlobarQuest/orchestrator",
                         "allowed_commands": ["make check"],
+                        "mutation_commands": ["make check"],
                         "secret_values": ["redacted"],
                     },
                 },

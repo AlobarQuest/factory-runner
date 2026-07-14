@@ -18,8 +18,13 @@
     "status": "green"
   },
   "constraints": {
-    "allowed_commands": ["make check"],
-    "target_repository": "AlobarQuest/brain",
+    "allowed_commands": [
+      "uv add --dev 'httpx2>=2.6.0'",
+      "uv sync --locked",
+      "uv run make check"
+    ],
+    "mutation_commands": ["uv add --dev 'httpx2>=2.6.0'"],
+    "target_repository": "AlobarQuest/change-manager",
     "work_unit_id": "__WORK_UNIT_ID__"
   }
 }
