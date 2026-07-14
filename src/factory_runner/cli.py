@@ -98,6 +98,10 @@ def _policy_directory(workspace: Path, checkout: Path) -> Path:
     return checkout.resolve().parent / f".{checkout.resolve().name}-factory-runner-policy"
 
 
+def _protected_workspace_paths(workspace: Path) -> tuple[Path, ...]:
+    return (workspace,)
+
+
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -298,6 +302,7 @@ def _prepare_claimed_workspace(
             Path.cwd(),
             permissions.allowed_commands,
             brief.authority.fingerprint,
+            protected_paths=_protected_workspace_paths(workspace),
         )
     except ValueError as error:
         typer.echo(f"unable to write tool policy: {error}", err=True)
@@ -350,6 +355,7 @@ def _prepare_claimed_workspace(
                 fingerprint=brief.authority.fingerprint,
                 allowed_commands=permissions.allowed_commands,
                 checkout=Path.cwd(),
+                protected_paths=_protected_workspace_paths(workspace),
             ),
             "policy_file": str(policy_path),
             "runtime": runtime,
@@ -498,6 +504,7 @@ def local_heavy_reclaim(
             Path.cwd(),
             permissions.allowed_commands,
             brief.authority.fingerprint,
+            protected_paths=_protected_workspace_paths(workspace),
         )
     except ValueError as error:
         typer.echo(f"unable to write tool policy: {error}", err=True)
@@ -530,6 +537,7 @@ def local_heavy_reclaim(
                 fingerprint=brief.authority.fingerprint,
                 allowed_commands=permissions.allowed_commands,
                 checkout=Path.cwd(),
+                protected_paths=_protected_workspace_paths(workspace),
             ),
             "policy_file": str(policy_path),
             "runtime": "local-heavy",
@@ -560,6 +568,7 @@ def _finalize_workspace(
         work_unit_id=work_unit_id,
         run=run,
         checkout=Path.cwd(),
+        protected_paths=_protected_workspace_paths(_workspace_path(workspace_dir)),
     )
 
     verification_summaries: list[str] = []
@@ -690,6 +699,7 @@ def _refreshed_verification_commands(
     work_unit_id: str,
     run: dict[str, Any],
     checkout: Path,
+    protected_paths: tuple[Path, ...],
 ) -> tuple[str, ...]:
     refreshed_brief = client.get_runner_brief(work_unit_id)
     saved_fingerprint = run.get("authority_fingerprint")
@@ -708,13 +718,18 @@ def _refreshed_verification_commands(
         )
         policy_file = Path(run["policy_file"])
         saved_checkout = Path(run["checkout_root"]).resolve(strict=True)
-        policy_fingerprint, policy_commands, policy_checkout, current_digest = read_policy(
-            policy_file
-        )
+        (
+            policy_fingerprint,
+            policy_commands,
+            policy_checkout,
+            policy_protected_paths,
+            current_digest,
+        ) = read_policy(policy_file)
         expected_digest = policy_digest(
             fingerprint=refreshed_brief.authority.fingerprint,
             allowed_commands=permissions.allowed_commands,
             checkout=saved_checkout,
+            protected_paths=protected_paths,
         )
     except (KeyError, TypeError, ValueError, OSError) as error:
         typer.echo(f"authority policy is invalid: {error}", err=True)
@@ -724,6 +739,7 @@ def _refreshed_verification_commands(
         or policy_commands != permissions.allowed_commands
         or saved_checkout != checkout.resolve()
         or policy_checkout != saved_checkout
+        or policy_protected_paths != tuple(path.resolve() for path in protected_paths)
         or run.get("policy_digest") != current_digest
         or current_digest != expected_digest
     ):

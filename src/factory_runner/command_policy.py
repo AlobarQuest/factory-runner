@@ -16,10 +16,13 @@ def write_tool_policy(
     checkout: Path,
     allowed_commands: tuple[str, ...],
     fingerprint: str,
+    *,
+    protected_paths: tuple[Path, ...] = (),
 ) -> tuple[Path, Path]:
     """Write the runner-owned hook policy and Claude settings outside the checkout."""
     commands = _validated_commands(allowed_commands)
     checkout_root = _resolved_directory(checkout)
+    protected = _resolved_protected_paths(protected_paths)
     resolved_policy_dir = policy_dir.resolve()
     if _contains(checkout_root, resolved_policy_dir):
         raise ValueError("policy directory must be outside the checkout")
@@ -29,7 +32,9 @@ def write_tool_policy(
     resolved_policy_dir.mkdir(parents=True, exist_ok=True)
     policy_path = resolved_policy_dir / "policy.json"
     settings_path = resolved_policy_dir / "settings.json"
-    policy_path.write_bytes(_canonical_policy_bytes(fingerprint, commands, checkout_root))
+    policy_path.write_bytes(
+        _canonical_policy_bytes(fingerprint, commands, checkout_root, protected)
+    )
     policy_path.chmod(0o400)
     quoted_policy_path = shlex.quote(str(policy_path))
     _write_canonical_json(
@@ -70,26 +75,36 @@ def authorize_tool(policy_path: Path, hook_input: Mapping[str, object]) -> tuple
         file_path = tool_input.get("file_path")
         if not isinstance(file_path, str) or not file_path:
             return False, "missing Edit file path"
-        return _authorize_edit(policy["checkout_root"], file_path)
+        return _authorize_edit(policy["checkout_root"], policy["protected_paths"], file_path)
     return False, "tool is not authorized"
 
 
-def policy_digest(*, fingerprint: str, allowed_commands: tuple[str, ...], checkout: Path) -> str:
+def policy_digest(
+    *,
+    fingerprint: str,
+    allowed_commands: tuple[str, ...],
+    checkout: Path,
+    protected_paths: tuple[Path, ...] = (),
+) -> str:
     """Return the digest for an expected policy built from immutable authority."""
     return hashlib.sha256(
         _canonical_policy_bytes(
-            fingerprint, _validated_commands(allowed_commands), _resolved_directory(checkout)
+            fingerprint,
+            _validated_commands(allowed_commands),
+            _resolved_directory(checkout),
+            _resolved_protected_paths(protected_paths),
         )
     ).hexdigest()
 
 
-def read_policy(policy_path: Path) -> tuple[str, tuple[str, ...], Path, str]:
+def read_policy(policy_path: Path) -> tuple[str, tuple[str, ...], Path, tuple[Path, ...], str]:
     """Load a valid policy and return its immutable fields plus canonical digest."""
     policy = _load_policy(policy_path)
     return (
         policy["authority_fingerprint"],
         policy["allowed_commands"],
         policy["checkout_root"],
+        policy["protected_paths"],
         hashlib.sha256(policy_path.read_bytes()).hexdigest(),
     )
 
@@ -113,6 +128,7 @@ def _load_policy(policy_path: Path) -> dict[str, Any]:
     fingerprint = payload.get("authority_fingerprint")
     commands = payload.get("allowed_commands")
     checkout = payload.get("checkout_root")
+    protected_paths = payload.get("protected_paths")
     if not isinstance(fingerprint, str) or not _FINGERPRINT.fullmatch(fingerprint):
         raise ValueError("invalid authority fingerprint")
     if not isinstance(commands, list):
@@ -120,14 +136,21 @@ def _load_policy(policy_path: Path) -> dict[str, Any]:
     validated_commands = _validated_commands(tuple(commands))
     if not isinstance(checkout, str):
         raise ValueError("invalid checkout root")
+    if not isinstance(protected_paths, list) or any(
+        not isinstance(path, str) for path in protected_paths
+    ):
+        raise ValueError("invalid protected paths")
     return {
         "authority_fingerprint": fingerprint,
         "allowed_commands": validated_commands,
         "checkout_root": _resolved_directory(Path(checkout)),
+        "protected_paths": _resolved_protected_paths(tuple(Path(path) for path in protected_paths)),
     }
 
 
-def _authorize_edit(checkout_root: Path, file_path: str) -> tuple[bool, str]:
+def _authorize_edit(
+    checkout_root: Path, protected_paths: tuple[Path, ...], file_path: str
+) -> tuple[bool, str]:
     candidate = Path(file_path)
     if not candidate.is_absolute():
         candidate = checkout_root / candidate
@@ -141,6 +164,8 @@ def _authorize_edit(checkout_root: Path, file_path: str) -> tuple[bool, str]:
         return False, "Edit path is outside checkout"
     if _contains(git_root, resolved_target):
         return False, "Edit path is inside checkout git metadata"
+    if any(_contains(protected_path, resolved_target) for protected_path in protected_paths):
+        return False, "Edit path is protected runner metadata"
     return True, "authorized"
 
 
@@ -158,6 +183,18 @@ def _resolved_directory(path: Path) -> Path:
     return resolved
 
 
+def _resolved_protected_paths(paths: tuple[Path, ...]) -> tuple[Path, ...]:
+    resolved_paths: list[Path] = []
+    for path in paths:
+        try:
+            resolved = path.resolve(strict=False)
+            _resolved_existing_parent(path)
+        except (OSError, RuntimeError) as error:
+            raise ValueError("protected metadata path cannot be resolved") from error
+        resolved_paths.append(resolved)
+    return tuple(resolved_paths)
+
+
 def _validated_commands(commands: tuple[object, ...]) -> tuple[str, ...]:
     if not commands or any(
         not isinstance(command, str) or not command.strip() for command in commands
@@ -166,13 +203,19 @@ def _validated_commands(commands: tuple[object, ...]) -> tuple[str, ...]:
     return tuple(command for command in commands if isinstance(command, str))
 
 
-def _canonical_policy_bytes(fingerprint: str, commands: tuple[str, ...], checkout: Path) -> bytes:
+def _canonical_policy_bytes(
+    fingerprint: str,
+    commands: tuple[str, ...],
+    checkout: Path,
+    protected_paths: tuple[Path, ...],
+) -> bytes:
     return (
         json.dumps(
             {
                 "authority_fingerprint": fingerprint,
                 "allowed_commands": list(commands),
                 "checkout_root": str(checkout),
+                "protected_paths": [str(path) for path in protected_paths],
             },
             separators=(",", ":"),
             sort_keys=True,

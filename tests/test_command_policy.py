@@ -39,6 +39,7 @@ def test_write_tool_policy_is_canonical_read_only_and_outside_checkout(tmp_path:
         "allowed_commands": ["uv sync --locked", "uv sync --locked"],
         "authority_fingerprint": "0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31",
         "checkout_root": str(checkout.resolve()),
+        "protected_paths": [],
     }
     assert stat.S_IMODE(policy.stat().st_mode) == 0o400
     settings_payload = json.loads(settings.read_text())
@@ -195,6 +196,33 @@ def test_authorize_tool_denies_outside_policy_and_symlink_edits(tmp_path: Path) 
         allowed, _reason = authorize_tool(
             policy,
             {"tool_name": "Edit", "tool_input": {"file_path": file_path}},
+        )
+        assert allowed is False
+
+
+def test_authorize_tool_denies_default_in_checkout_runner_metadata(tmp_path: Path) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    metadata = checkout / ".factory-runner"
+    run_metadata = metadata / "run.json"
+    prompt = metadata / "prompt.md"
+    brief = metadata / "brief.json"
+    metadata.mkdir()
+    run_metadata.write_text("{}\n")
+    prompt.write_text("prompt\n")
+    brief.write_text("{}\n")
+    policy, _settings = write_tool_policy(
+        tmp_path / "policy",
+        checkout,
+        ("uv sync --locked",),
+        "0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31",
+        protected_paths=(metadata,),
+    )
+
+    for file_path in (run_metadata, prompt, brief):
+        allowed, _reason = authorize_tool(
+            policy,
+            {"tool_name": "Edit", "tool_input": {"file_path": str(file_path)}},
         )
         assert allowed is False
 

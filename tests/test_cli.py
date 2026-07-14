@@ -34,6 +34,7 @@ def _finalization_authority(tmp_path: Path, brief: RunnerBrief) -> dict[str, obj
         Path.cwd(),
         tuple(brief.authority.envelope.constraints["allowed_commands"]),
         brief.authority.fingerprint,
+        protected_paths=(tmp_path,),
     )
     return {
         "authority_fingerprint": brief.authority.fingerprint,
@@ -42,6 +43,7 @@ def _finalization_authority(tmp_path: Path, brief: RunnerBrief) -> dict[str, obj
             fingerprint=brief.authority.fingerprint,
             allowed_commands=tuple(brief.authority.envelope.constraints["allowed_commands"]),
             checkout=Path.cwd(),
+            protected_paths=(tmp_path,),
         ),
         "policy_file": str(policy),
     }
@@ -302,6 +304,7 @@ def test_prepare_run_claims_starts_and_writes_workspace(tmp_path: Path) -> None:
     assert policy.is_file()
     assert policy.is_relative_to(tmp_path.resolve())
     assert policy.is_relative_to(Path.cwd().resolve()) is False
+    assert json.loads(policy.read_text())["protected_paths"] == [str(tmp_path.resolve())]
     settings = Path(manifest["settings_file"])
     assert settings.is_file()
     assert calls[1][0] == "brief"
@@ -378,6 +381,7 @@ def test_finalize_replays_refreshed_commands_in_order_with_bash_argv(
         checkout,
         ("uv run python -c \"print('quoted')\"", "uv sync --locked", "uv sync --locked"),
         brief.authority.fingerprint,
+        protected_paths=(tmp_path,),
     )
     brief.authority.envelope.constraints["allowed_commands"] = [
         "uv run python -c \"print('quoted')\"",
@@ -410,6 +414,7 @@ def test_finalize_replays_refreshed_commands_in_order_with_bash_argv(
                         "uv sync --locked",
                     ),
                     checkout=checkout,
+                    protected_paths=(tmp_path,),
                 ),
                 "policy_file": str(policy),
                 "submit_expected_version": 5,
@@ -540,12 +545,14 @@ def test_refreshed_authority_replay_is_stable_and_preserves_duplicates(tmp_path:
         work_unit_id="unit-1",
         run=run,
         checkout=Path.cwd(),
+        protected_paths=(tmp_path,),
     )
     second = _refreshed_verification_commands(
         client=cast(OrchestratorClient, FakeClient()),
         work_unit_id="unit-1",
         run=run,
         checkout=Path.cwd(),
+        protected_paths=(tmp_path,),
     )
 
     assert first == second == ("uv sync --locked", "uv sync --locked")
