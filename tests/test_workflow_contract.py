@@ -97,11 +97,11 @@ def test_workflow_pins_runner_and_coding_action_before_any_claim() -> None:
     assert "runner_revision" not in dispatch_inputs
     assert (
         'uv tool install "git+https://github.com/AlobarQuest/factory-runner.git@'
-        '5762c0db721ff22ecabb612b6507cd85a95965eb"' in workflow
+        '562fe3cf8e9bc96cacaaf7458842b6d596c0abda"' in workflow
     )
     assert (
         "factory-runner verify-install-revision --expected "
-        '"5762c0db721ff22ecabb612b6507cd85a95965eb"'
+        '"562fe3cf8e9bc96cacaaf7458842b6d596c0abda"'
     ) in workflow
     assert "inputs.runner_revision" not in workflow
     assert "factory-runner.git@beta" not in workflow
