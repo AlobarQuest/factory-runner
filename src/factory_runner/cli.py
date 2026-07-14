@@ -25,7 +25,7 @@ from factory_runner.command_policy import (
     write_tool_policy,
 )
 from factory_runner.evidence import build_pr_opened_evidence
-from factory_runner.models import RunnerBrief
+from factory_runner.models import RunnerBrief, RunnerPermissions
 from factory_runner.pr_body import render_pr_body
 
 app = typer.Typer(no_args_is_help=True)
@@ -597,13 +597,20 @@ def _finalize_workspace(
         typer.echo("workspace work unit mismatch", err=True)
         raise typer.Exit(code=1)
 
-    verification_commands = _refreshed_verification_commands(
+    permissions = _refreshed_finalization_permissions(
         client=client,
         work_unit_id=work_unit_id,
         run=run,
         checkout=Path.cwd(),
         protected_paths=_protected_workspace_paths(_workspace_path(workspace_dir)),
     )
+    if not permissions.can_create_pr:
+        typer.echo("authority does not allow pull request creation", err=True)
+        raise typer.Exit(code=1)
+    if not permissions.can_submit_evidence:
+        typer.echo("authority does not allow evidence submission", err=True)
+        raise typer.Exit(code=1)
+    verification_commands = permissions.allowed_commands
 
     verification_summaries: list[str] = []
     verification_payloads: list[dict[str, object]] = []
@@ -735,6 +742,23 @@ def _refreshed_verification_commands(
     checkout: Path,
     protected_paths: tuple[Path, ...],
 ) -> tuple[str, ...]:
+    return _refreshed_finalization_permissions(
+        client=client,
+        work_unit_id=work_unit_id,
+        run=run,
+        checkout=checkout,
+        protected_paths=protected_paths,
+    ).allowed_commands
+
+
+def _refreshed_finalization_permissions(
+    *,
+    client: OrchestratorClient,
+    work_unit_id: str,
+    run: dict[str, Any],
+    checkout: Path,
+    protected_paths: tuple[Path, ...],
+) -> RunnerPermissions:
     refreshed_brief = client.get_runner_brief(work_unit_id)
     saved_fingerprint = run.get("authority_fingerprint")
     if (
@@ -782,7 +806,7 @@ def _refreshed_verification_commands(
     ):
         typer.echo("authority policy changed before finalization", err=True)
         raise typer.Exit(code=1)
-    return permissions.allowed_commands
+    return permissions
 
 
 @app.command("finalize-run")

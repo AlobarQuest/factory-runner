@@ -714,6 +714,96 @@ def test_finalize_run_commits_pr_evidence_and_submits(
     assert calls[-1][0] == "submit"
 
 
+@pytest.mark.parametrize(
+    ("capability", "message"),
+    [
+        ("github.pr.create", "authority does not allow pull request creation"),
+        ("orchestrator.evidence.write", "authority does not allow evidence submission"),
+    ],
+)
+def test_finalize_refuses_prohibited_capabilities_before_push_pr_or_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capability: str,
+    message: str,
+) -> None:
+    brief = _runner_brief()
+    brief.authority.envelope.capabilities[capability] = "prohibited"
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "brief.json").write_text(brief.model_dump_json())
+    (tmp_path / "run.json").write_text(
+        json.dumps(
+            {
+                "attempt": 1,
+                "claim_id": "claim-1",
+                "context_snapshot_id": "snapshot-1",
+                "lease_token": "lease-redacted",
+                "package_revision_id": "rev-1",
+                "submit_expected_version": 5,
+                "work_unit_id": "unit-1",
+                **_finalization_authority(tmp_path, brief),
+            }
+        )
+    )
+    client_calls: list[str] = []
+    command_calls: list[list[str]] = []
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None: ...
+
+        def get_runner_brief(self, _unit_id: str) -> RunnerBrief:
+            client_calls.append("get_runner_brief")
+            return brief
+
+        def list_evidence(self, _unit_id: str) -> list[dict[str, object]]:
+            client_calls.append("list_evidence")
+            return []
+
+        def submit_evidence(self, _unit_id: str, _payload: dict[str, object]) -> dict[str, object]:
+            client_calls.append("submit_evidence")
+            return {"id": "evidence-1"}
+
+        def submit(self, _unit_id: str, _payload: dict[str, object]) -> dict[str, object]:
+            client_calls.append("submit")
+            return {}
+
+    from factory_runner import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "OrchestratorClient", FakeClient)
+
+    def fake_run(command: list[str], **_kwargs: object) -> str:
+        command_calls.append(command)
+        if command[:3] == ["git", "status", "--porcelain"]:
+            return " M src/example.py\n"
+        if command[:3] == ["git", "rev-parse", "HEAD"]:
+            return "abc123\n"
+        if command[:3] == ["gh", "pr", "create"]:
+            return "https://github.com/AlobarQuest/orchestrator/pull/99\n"
+        return ""
+
+    monkeypatch.setattr(cli_module, "_run_command", fake_run)
+    result = CliRunner().invoke(
+        app,
+        [
+            "finalize-run",
+            "--orchestrator-url",
+            "https://sds.alobar.net",
+            "--credential-key-id",
+            "factory-runner-github",
+            "--work-unit-id",
+            "unit-1",
+            "--workspace-dir",
+            str(tmp_path),
+        ],
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+    )
+
+    assert result.exit_code == 1
+    assert message in result.output
+    assert command_calls == []
+    assert client_calls == ["get_runner_brief"]
+
+
 def test_finalize_run_supersedes_when_prior_evidence_exists(tmp_path: Path) -> None:
     """A retry after a partial-success earlier attempt must supersede the evidence that
     attempt left behind, or the orchestrator rejects the re-post with evidence_already_exists.
