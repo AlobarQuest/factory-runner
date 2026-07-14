@@ -95,6 +95,9 @@ def test_workflow_pins_runner_and_coding_action_before_any_claim() -> None:
 
     assert workflow_call_inputs["runner_revision"]["required"] is True
     assert re.fullmatch(r"[0-9a-f]{40}", dispatch_inputs["runner_revision"]["default"])
+    assert dispatch_inputs["runner_revision"]["default"] == (
+        "00c47d259f2294ba8bd2935de4dc409ffa3023d4"
+    )
     assert (
         "git+https://github.com/AlobarQuest/factory-runner.git@${{ inputs.runner_revision }}"
         in workflow
