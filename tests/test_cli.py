@@ -388,6 +388,170 @@ def test_finalize_run_supersedes_when_prior_evidence_exists(tmp_path: Path) -> N
     assert submitted["supersede"] is True
 
 
+def test_fail_run_reports_bounded_failure_from_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "run.json").write_text(
+        json.dumps(
+            {
+                "attempt": 1,
+                "lease_token": "lease-redacted",
+                "submit_expected_version": 5,
+                "work_unit_id": "unit-1",
+            }
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None: ...
+
+        def fail(self, unit_id: str, **payload: object) -> dict[str, object]:
+            calls.append({"unit_id": unit_id, **payload})
+            return {"unit_id": unit_id, "state": "failed", "version": 6}
+
+    from factory_runner import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "OrchestratorClient", FakeClient)
+    result = CliRunner().invoke(
+        app,
+        [
+            "fail-run",
+            "--orchestrator-url",
+            "https://sds.alobar.net",
+            "--credential-key-id",
+            "factory-runner-github",
+            "--work-unit-id",
+            "unit-1",
+            "--workspace-dir",
+            str(tmp_path),
+            "--reason",
+            "coding_action_failed",
+        ],
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [
+        {
+            "unit_id": "unit-1",
+            "expected_version": 5,
+            "idempotency_key": "factory-runner:unit-1:fail:a1:coding_action_failed",
+            "attempt": 1,
+            "lease_token": "lease-redacted",
+            "reason": "coding_action_failed",
+        }
+    ]
+    assert result.output == "failed work unit unit-1 attempt 1\n"
+    assert "lease-redacted" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("run", "reason", "expected_message"),
+    [
+        (
+            {
+                "attempt": 1,
+                "lease_token": "lease-redacted",
+                "submit_expected_version": 5,
+                "work_unit_id": "unit-2",
+            },
+            "coding_action_failed",
+            "workspace work unit mismatch",
+        ),
+        (
+            {
+                "attempt": 1,
+                "lease_token": "lease-redacted",
+                "submit_expected_version": 5,
+                "work_unit_id": "unit-1",
+            },
+            "not_a_failure_reason",
+            "Invalid value",
+        ),
+    ],
+)
+def test_fail_run_rejects_invalid_local_input_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    run: dict[str, object],
+    reason: str,
+    expected_message: str,
+) -> None:
+    (tmp_path / "run.json").write_text(json.dumps(run))
+    mutations: list[object] = []
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None: ...
+
+        def fail(self, unit_id: str, **payload: object) -> dict[str, object]:
+            mutations.append((unit_id, payload))
+            return {}
+
+    from factory_runner import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "OrchestratorClient", FakeClient)
+    result = CliRunner().invoke(
+        app,
+        [
+            "fail-run",
+            "--orchestrator-url",
+            "https://sds.alobar.net",
+            "--credential-key-id",
+            "factory-runner-github",
+            "--work-unit-id",
+            "unit-1",
+            "--workspace-dir",
+            str(tmp_path),
+            "--reason",
+            reason,
+        ],
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+    )
+
+    assert result.exit_code != 0
+    assert expected_message in result.output
+    assert mutations == []
+
+
+def test_fail_run_rejects_missing_workspace_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    mutations: list[object] = []
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None: ...
+
+        def fail(self, unit_id: str, **payload: object) -> dict[str, object]:
+            mutations.append((unit_id, payload))
+            return {}
+
+    from factory_runner import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "OrchestratorClient", FakeClient)
+    result = CliRunner().invoke(
+        app,
+        [
+            "fail-run",
+            "--orchestrator-url",
+            "https://sds.alobar.net",
+            "--credential-key-id",
+            "factory-runner-github",
+            "--work-unit-id",
+            "unit-1",
+            "--workspace-dir",
+            str(tmp_path),
+            "--reason",
+            "finalization_failed",
+        ],
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+    )
+
+    assert result.exit_code != 0
+    assert "run.json" in result.output
+    assert mutations == []
+
+
 def test_local_heavy_prepare_writes_sanitized_workspace(tmp_path: Path) -> None:
     brief = _runner_brief()
     calls: list[tuple[str, object]] = []

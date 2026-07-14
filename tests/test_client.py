@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -116,6 +118,43 @@ def test_client_renews_claim() -> None:
         '{"attempt":2,"lease_token":"lease-redacted",'
         '"idempotency_key":"local-heavy:unit-1:renew:a2","expected_version":5}'
     )
+
+
+def test_client_fails_work_unit() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["payload"] = json.loads(request.read())
+        return httpx.Response(200, json={"unit_id": "unit-1", "state": "failed", "version": 6})
+
+    client = OrchestratorClient(
+        base_url="https://sds.alobar.net",
+        credential_key_id="factory-runner-github",
+        token="redacted-token",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = client.fail(
+        "unit-1",
+        expected_version=5,
+        idempotency_key="factory-runner:unit-1:fail:a1:coding_action_failed",
+        attempt=1,
+        lease_token="lease-redacted",
+        reason="coding_action_failed",
+    )
+
+    assert result["state"] == "failed"
+    assert seen == {
+        "path": "/api/v1/work-units/unit-1/commands/fail",
+        "payload": {
+            "expected_version": 5,
+            "idempotency_key": "factory-runner:unit-1:fail:a1:coding_action_failed",
+            "attempt": 1,
+            "lease_token": "lease-redacted",
+            "reason": "coding_action_failed",
+        },
+    }
 
 
 def test_client_reclaims_expired_claim() -> None:

@@ -5,7 +5,7 @@ import os
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import typer
 
@@ -606,6 +606,36 @@ def finalize_run(
         workspace_dir=workspace_dir,
         success_prefix="submitted work unit",
     )
+
+
+@app.command("fail-run")
+def fail_run(
+    orchestrator_url: Annotated[str, typer.Option()],
+    credential_key_id: Annotated[str, typer.Option()],
+    work_unit_id: Annotated[str, typer.Option()],
+    reason: Annotated[Literal["coding_action_failed", "finalization_failed"], typer.Option()],
+    workspace_dir: Annotated[str, typer.Option()] = ".factory-runner",
+) -> None:
+    run_path = _workspace_path(workspace_dir) / "run.json"
+    if not run_path.is_file():
+        typer.echo(f"workspace run.json not found: {run_path}", err=True)
+        raise typer.Exit(code=1)
+    run = json.loads(run_path.read_text())
+    if run.get("work_unit_id") != work_unit_id:
+        typer.echo("workspace work unit mismatch", err=True)
+        raise typer.Exit(code=1)
+
+    attempt = int(run["attempt"])
+    client = _client(orchestrator_url, credential_key_id)
+    client.fail(
+        work_unit_id,
+        expected_version=int(run["submit_expected_version"]),
+        idempotency_key=f"factory-runner:{work_unit_id}:fail:a{attempt}:{reason}",
+        attempt=attempt,
+        lease_token=str(run["lease_token"]),
+        reason=reason,
+    )
+    typer.echo(f"failed work unit {work_unit_id} attempt {attempt}")
 
 
 @app.command("local-heavy-finalize")
