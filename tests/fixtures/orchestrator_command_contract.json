@@ -22,6 +22,7 @@
       "attempt",
       "context_snapshot_id",
       "lease_token",
+      "reason",
       "standing_context"
     ],
     "required": [

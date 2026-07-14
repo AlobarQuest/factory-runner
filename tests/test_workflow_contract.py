@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import yaml
@@ -61,6 +62,11 @@ def _coding_step() -> dict:
     return next(s for s in steps if "claude-code-base-action" in str(s.get("uses", "")))
 
 
+def _named_step(name: str) -> dict:
+    data = yaml.safe_load(Path(".github/workflows/factory-runner.yml").read_text())
+    return next(step for step in data["jobs"]["run"]["steps"] if step.get("name") == name)
+
+
 def _cli_steps() -> str:
     data = yaml.safe_load(Path(".github/workflows/factory-runner.yml").read_text())
     return "\n".join(str(s.get("run", "")) for s in data["jobs"]["run"]["steps"] if "run" in s)
@@ -102,3 +108,39 @@ def test_the_turn_budget_is_large_enough_to_finish_a_change() -> None:
     step = _coding_step()
 
     assert int(step["with"]["max_turns"]) >= 30
+
+
+def test_failed_coding_or_finalization_is_reported_without_masking_the_failure() -> None:
+    coding = _named_step("Run scoped coding action")
+    finalize = _named_step("Finalize scoped run")
+
+    assert coding["id"] == "coding"
+    assert finalize["id"] == "finalize"
+    assert finalize["if"].strip() == "steps.coding.outcome == 'success'"
+
+    report = _named_step("Report failed scoped run")
+    assert report["id"] == "report_failure"
+    assert "always()" in report["if"]
+    assert "steps.prepare.outcome == 'success'" in report["if"]
+    assert "steps.coding.outcome == 'failure'" in report["if"]
+    assert "steps.finalize.outcome == 'failure'" in report["if"]
+    assert "factory-runner fail-run" in report["run"]
+    assert "continue-on-error" not in coding
+    assert "continue-on-error" not in finalize
+
+
+def test_failure_reporter_uses_only_supported_reasons_and_runner_credentials() -> None:
+    report = _named_step("Report failed scoped run")
+
+    reasons = re.findall(r'reason="([^"]+)"', report["run"])
+    assert reasons == ["finalization_failed", "coding_action_failed"]
+    assert (
+        'if [[ "${{ steps.finalize.outcome }}" == "failure" ]]; then\n'
+        '  reason="finalization_failed"'
+    ) in report["run"]
+    assert set(report["env"]) == {
+        "FACTORY_RUNNER_TOKEN",
+        "FACTORY_RUNNER_CREDENTIAL_KEY_ID",
+    }
+    assert "ANTHROPIC_API_KEY" not in str(report)
+    assert "FACTORY_PR_TOKEN" not in str(report)
