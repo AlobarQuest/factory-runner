@@ -1,4 +1,5 @@
 import json
+from typing import Literal, get_type_hints
 
 import httpx
 import pytest
@@ -155,6 +156,13 @@ def test_client_fails_work_unit() -> None:
             "reason": "coding_action_failed",
         },
     }
+
+
+def test_client_failure_reason_is_type_bounded() -> None:
+    assert (
+        get_type_hints(OrchestratorClient.fail)["reason"]
+        == Literal["coding_action_failed", "finalization_failed"]
+    )
 
 
 def test_client_reclaims_expired_claim() -> None:

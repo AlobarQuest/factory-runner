@@ -5,12 +5,12 @@ import os
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 import typer
 
 from factory_runner.authority import validate_authority
-from factory_runner.client import OrchestratorClient
+from factory_runner.client import FailureReason, OrchestratorClient
 from factory_runner.evidence import build_pr_opened_evidence
 from factory_runner.models import RunnerBrief
 from factory_runner.pr_body import render_pr_body
@@ -613,7 +613,7 @@ def fail_run(
     orchestrator_url: Annotated[str, typer.Option()],
     credential_key_id: Annotated[str, typer.Option()],
     work_unit_id: Annotated[str, typer.Option()],
-    reason: Annotated[Literal["coding_action_failed", "finalization_failed"], typer.Option()],
+    reason: Annotated[FailureReason, typer.Option()],
     workspace_dir: Annotated[str, typer.Option()] = ".factory-runner",
 ) -> None:
     run_path = _workspace_path(workspace_dir) / "run.json"
