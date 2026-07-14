@@ -35,6 +35,7 @@ def validate_authority(
         allowed_tools=tuple(dict.fromkeys(tools)),
         allowed_commands=allowed_commands,
         mutation_commands=mutation_commands,
+        can_edit=_allowed(envelope, "repo.edit"),
         can_create_pr=_allowed(envelope, "github.pr.create"),
         can_submit_evidence=_allowed(envelope, "orchestrator.evidence.write"),
         can_claim=_allowed(envelope, "orchestrator.claim"),

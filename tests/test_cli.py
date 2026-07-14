@@ -22,6 +22,7 @@ def _tool_policy(tmp_path: Path) -> Path:
         checkout,
         ("uv sync --locked",),
         "0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31",
+        edit_allowed=True,
     )
     return policy
 
@@ -34,6 +35,7 @@ def _finalization_authority(tmp_path: Path, brief: RunnerBrief) -> dict[str, obj
         Path.cwd(),
         tuple(brief.authority.envelope.constraints["allowed_commands"]),
         brief.authority.fingerprint,
+        edit_allowed=True,
         protected_paths=(tmp_path,),
     )
     return {
@@ -43,6 +45,7 @@ def _finalization_authority(tmp_path: Path, brief: RunnerBrief) -> dict[str, obj
             fingerprint=brief.authority.fingerprint,
             allowed_commands=tuple(brief.authority.envelope.constraints["allowed_commands"]),
             checkout=Path.cwd(),
+            edit_allowed=True,
             protected_paths=(tmp_path,),
         ),
         "policy_file": str(policy),
@@ -381,6 +384,7 @@ def test_finalize_replays_refreshed_commands_in_order_with_bash_argv(
         checkout,
         ("uv run python -c \"print('quoted')\"", "uv sync --locked", "uv sync --locked"),
         brief.authority.fingerprint,
+        edit_allowed=True,
         protected_paths=(tmp_path,),
     )
     brief.authority.envelope.constraints["allowed_commands"] = [
@@ -414,6 +418,7 @@ def test_finalize_replays_refreshed_commands_in_order_with_bash_argv(
                         "uv sync --locked",
                     ),
                     checkout=checkout,
+                    edit_allowed=True,
                     protected_paths=(tmp_path,),
                 ),
                 "policy_file": str(policy),

@@ -37,9 +37,26 @@ def test_maps_allowed_capabilities_to_minimal_tools() -> None:
     assert permissions.allowed_tools == ("Read", "Edit", "Bash", "Glob")
     assert permissions.allowed_commands == ("make check",)
     assert permissions.mutation_commands == ("make check",)
+    assert permissions.can_edit is True
     assert permissions.can_create_pr is True
     assert permissions.can_submit_evidence is True
     assert permissions.can_claim is True
+
+
+def test_maps_prohibited_repo_edit_to_false_permission() -> None:
+    envelope = _envelope().model_copy(
+        update={"capabilities": {**_envelope().capabilities, "repo.edit": "prohibited"}}
+    )
+
+    permissions = validate_authority(
+        envelope,
+        work_unit_id="unit-1",
+        target_repo="AlobarQuest/orchestrator",
+        current_repo="AlobarQuest/orchestrator",
+    )
+
+    assert permissions.can_edit is False
+    assert "Edit" not in permissions.allowed_tools
 
 
 def test_unknown_capability_fails_closed() -> None:

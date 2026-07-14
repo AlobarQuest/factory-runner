@@ -21,6 +21,7 @@ class RunnerPermissions(BaseModel):
     allowed_tools: tuple[str, ...]
     allowed_commands: tuple[str, ...]
     mutation_commands: tuple[str, ...]
+    can_edit: bool
     can_create_pr: bool
     can_submit_evidence: bool
     can_claim: bool

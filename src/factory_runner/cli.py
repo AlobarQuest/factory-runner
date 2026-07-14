@@ -332,6 +332,7 @@ def _prepare_claimed_workspace(
             Path.cwd(),
             permissions.allowed_commands,
             brief.authority.fingerprint,
+            edit_allowed=permissions.can_edit,
             protected_paths=_protected_workspace_paths(workspace),
         )
     except ValueError as error:
@@ -385,6 +386,7 @@ def _prepare_claimed_workspace(
                 fingerprint=brief.authority.fingerprint,
                 allowed_commands=permissions.allowed_commands,
                 checkout=Path.cwd(),
+                edit_allowed=permissions.can_edit,
                 protected_paths=_protected_workspace_paths(workspace),
             ),
             "policy_file": str(policy_path),
@@ -534,6 +536,7 @@ def local_heavy_reclaim(
             Path.cwd(),
             permissions.allowed_commands,
             brief.authority.fingerprint,
+            edit_allowed=permissions.can_edit,
             protected_paths=_protected_workspace_paths(workspace),
         )
     except ValueError as error:
@@ -567,6 +570,7 @@ def local_heavy_reclaim(
                 fingerprint=brief.authority.fingerprint,
                 allowed_commands=permissions.allowed_commands,
                 checkout=Path.cwd(),
+                edit_allowed=permissions.can_edit,
                 protected_paths=_protected_workspace_paths(workspace),
             ),
             "policy_file": str(policy_path),
@@ -752,6 +756,7 @@ def _refreshed_verification_commands(
             policy_fingerprint,
             policy_commands,
             policy_checkout,
+            policy_edit_allowed,
             policy_protected_paths,
             current_digest,
         ) = read_policy(policy_file)
@@ -759,6 +764,7 @@ def _refreshed_verification_commands(
             fingerprint=refreshed_brief.authority.fingerprint,
             allowed_commands=permissions.allowed_commands,
             checkout=saved_checkout,
+            edit_allowed=permissions.can_edit,
             protected_paths=protected_paths,
         )
     except (KeyError, TypeError, ValueError, OSError) as error:
@@ -767,6 +773,7 @@ def _refreshed_verification_commands(
     if (
         policy_fingerprint != refreshed_brief.authority.fingerprint
         or policy_commands != permissions.allowed_commands
+        or policy_edit_allowed != permissions.can_edit
         or saved_checkout != checkout.resolve()
         or policy_checkout != saved_checkout
         or policy_protected_paths != tuple(path.resolve() for path in protected_paths)

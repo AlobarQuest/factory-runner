@@ -17,6 +17,7 @@ def write_tool_policy(
     allowed_commands: tuple[str, ...],
     fingerprint: str,
     *,
+    edit_allowed: bool,
     protected_paths: tuple[Path, ...] = (),
 ) -> tuple[Path, Path]:
     """Write the runner-owned hook policy and Claude settings outside the checkout."""
@@ -33,7 +34,7 @@ def write_tool_policy(
     policy_path = resolved_policy_dir / "policy.json"
     settings_path = resolved_policy_dir / "settings.json"
     policy_path.write_bytes(
-        _canonical_policy_bytes(fingerprint, commands, checkout_root, protected)
+        _canonical_policy_bytes(fingerprint, commands, checkout_root, edit_allowed, protected)
     )
     policy_path.chmod(0o400)
     quoted_policy_path = shlex.quote(str(policy_path))
@@ -72,6 +73,8 @@ def authorize_tool(policy_path: Path, hook_input: Mapping[str, object]) -> tuple
             else (False, "Bash command is not authorized")
         )
     if tool_name == "Edit":
+        if not policy["edit_allowed"]:
+            return False, "Edit is not authorized"
         file_path = tool_input.get("file_path")
         if not isinstance(file_path, str) or not file_path:
             return False, "missing Edit file path"
@@ -85,6 +88,7 @@ def policy_digest(
     allowed_commands: tuple[str, ...],
     checkout: Path,
     protected_paths: tuple[Path, ...] = (),
+    edit_allowed: bool,
 ) -> str:
     """Return the digest for an expected policy built from immutable authority."""
     return hashlib.sha256(
@@ -92,18 +96,22 @@ def policy_digest(
             fingerprint,
             _validated_commands(allowed_commands),
             _resolved_directory(checkout),
+            edit_allowed,
             _resolved_protected_paths(protected_paths),
         )
     ).hexdigest()
 
 
-def read_policy(policy_path: Path) -> tuple[str, tuple[str, ...], Path, tuple[Path, ...], str]:
+def read_policy(
+    policy_path: Path,
+) -> tuple[str, tuple[str, ...], Path, bool, tuple[Path, ...], str]:
     """Load a valid policy and return its immutable fields plus canonical digest."""
     policy = _load_policy(policy_path)
     return (
         policy["authority_fingerprint"],
         policy["allowed_commands"],
         policy["checkout_root"],
+        policy["edit_allowed"],
         policy["protected_paths"],
         hashlib.sha256(policy_path.read_bytes()).hexdigest(),
     )
@@ -128,6 +136,7 @@ def _load_policy(policy_path: Path) -> dict[str, Any]:
     fingerprint = payload.get("authority_fingerprint")
     commands = payload.get("allowed_commands")
     checkout = payload.get("checkout_root")
+    edit_allowed = payload.get("edit_allowed")
     protected_paths = payload.get("protected_paths")
     if not isinstance(fingerprint, str) or not _FINGERPRINT.fullmatch(fingerprint):
         raise ValueError("invalid authority fingerprint")
@@ -136,6 +145,8 @@ def _load_policy(policy_path: Path) -> dict[str, Any]:
     validated_commands = _validated_commands(tuple(commands))
     if not isinstance(checkout, str):
         raise ValueError("invalid checkout root")
+    if not isinstance(edit_allowed, bool):
+        raise ValueError("invalid edit authority")
     if not isinstance(protected_paths, list) or any(
         not isinstance(path, str) for path in protected_paths
     ):
@@ -144,6 +155,7 @@ def _load_policy(policy_path: Path) -> dict[str, Any]:
         "authority_fingerprint": fingerprint,
         "allowed_commands": validated_commands,
         "checkout_root": _resolved_directory(Path(checkout)),
+        "edit_allowed": edit_allowed,
         "protected_paths": _resolved_protected_paths(tuple(Path(path) for path in protected_paths)),
     }
 
@@ -207,6 +219,7 @@ def _canonical_policy_bytes(
     fingerprint: str,
     commands: tuple[str, ...],
     checkout: Path,
+    edit_allowed: bool,
     protected_paths: tuple[Path, ...],
 ) -> bytes:
     return (
@@ -215,6 +228,7 @@ def _canonical_policy_bytes(
                 "authority_fingerprint": fingerprint,
                 "allowed_commands": list(commands),
                 "checkout_root": str(checkout),
+                "edit_allowed": edit_allowed,
                 "protected_paths": [str(path) for path in protected_paths],
             },
             separators=(",", ":"),

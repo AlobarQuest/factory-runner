@@ -18,6 +18,7 @@ def _policy(tmp_path: Path, commands: tuple[str, ...] = ("uv sync --locked",)) -
         checkout,
         commands,
         "0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31",
+        edit_allowed=True,
     )
     return policy
 
@@ -31,6 +32,7 @@ def test_write_tool_policy_is_canonical_read_only_and_outside_checkout(tmp_path:
         checkout,
         ("uv sync --locked", "uv sync --locked"),
         "0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31",
+        edit_allowed=True,
     )
 
     assert policy.parent == settings.parent == (tmp_path / "policy").resolve()
@@ -39,6 +41,7 @@ def test_write_tool_policy_is_canonical_read_only_and_outside_checkout(tmp_path:
         "allowed_commands": ["uv sync --locked", "uv sync --locked"],
         "authority_fingerprint": "0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31",
         "checkout_root": str(checkout.resolve()),
+        "edit_allowed": True,
         "protected_paths": [],
     }
     assert stat.S_IMODE(policy.stat().st_mode) == 0o400
@@ -58,6 +61,7 @@ def test_write_tool_policy_rejects_blank_approved_commands(
             tmp_path / "checkout",
             commands,
             "0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31",
+            edit_allowed=True,
         )
 
 
@@ -158,6 +162,60 @@ def test_authorize_tool_allows_existing_non_git_edit_in_checkout(tmp_path: Path)
 
 
 @pytest.mark.parametrize(
+    ("edit_allowed", "expected"),
+    [(False, False), (True, True)],
+)
+def test_authorize_tool_requires_explicit_edit_authority(
+    tmp_path: Path, edit_allowed: bool, expected: bool
+) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    target = checkout / "src" / "main.py"
+    target.parent.mkdir()
+    target.write_text("print('ok')\n")
+    policy, _settings = write_tool_policy(
+        tmp_path / "policy",
+        checkout,
+        ("uv sync --locked",),
+        "0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31",
+        edit_allowed=edit_allowed,
+    )
+
+    allowed, _reason = authorize_tool(
+        policy,
+        {"tool_name": "Edit", "tool_input": {"file_path": str(target)}},
+    )
+
+    assert allowed is expected
+
+
+def test_authorize_tool_denies_edit_when_policy_omits_edit_authority(tmp_path: Path) -> None:
+    target = tmp_path / "checkout" / "src" / "main.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("print('ok')\n")
+    policy = tmp_path / "policy.json"
+    policy.write_text(
+        json.dumps(
+            {
+                "authority_fingerprint": (
+                    "0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31"
+                ),
+                "allowed_commands": ["uv sync --locked"],
+                "checkout_root": str((tmp_path / "checkout").resolve()),
+                "protected_paths": [],
+            }
+        )
+    )
+
+    allowed, _reason = authorize_tool(
+        policy,
+        {"tool_name": "Edit", "tool_input": {"file_path": str(target)}},
+    )
+
+    assert allowed is False
+
+
+@pytest.mark.parametrize(
     "file_path",
     [
         "../outside.txt",
@@ -216,6 +274,7 @@ def test_authorize_tool_denies_default_in_checkout_runner_metadata(tmp_path: Pat
         checkout,
         ("uv sync --locked",),
         "0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31",
+        edit_allowed=True,
         protected_paths=(metadata,),
     )
 
