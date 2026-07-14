@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -11,6 +13,12 @@ import typer
 
 from factory_runner.authority import validate_authority
 from factory_runner.client import FailureReason, OrchestratorClient
+from factory_runner.command_policy import (
+    authorize_tool,
+    policy_digest,
+    read_policy,
+    write_tool_policy,
+)
 from factory_runner.evidence import build_pr_opened_evidence
 from factory_runner.models import RunnerBrief
 from factory_runner.pr_body import render_pr_body
@@ -21,6 +29,25 @@ app = typer.Typer(no_args_is_help=True)
 @app.callback(invoke_without_command=True)
 def main() -> None:
     return None
+
+
+@app.command("authorize-tool")
+def authorize_tool_command(
+    policy_file: Annotated[Path, typer.Option()],
+) -> None:
+    """Authorize one Claude Code PreToolUse hook request."""
+    try:
+        hook_input = json.loads(sys.stdin.read())
+    except json.JSONDecodeError:
+        typer.echo("invalid hook input", err=True)
+        raise typer.Exit(code=2) from None
+    if not isinstance(hook_input, Mapping):
+        typer.echo("invalid hook input", err=True)
+        raise typer.Exit(code=2)
+    allowed, reason = authorize_tool(policy_file, hook_input)
+    if not allowed:
+        typer.echo(reason, err=True)
+        raise typer.Exit(code=2)
 
 
 def _sanitize_runner_brief(brief: RunnerBrief) -> dict[str, Any]:
@@ -60,6 +87,15 @@ def _client(orchestrator_url: str, credential_key_id: str) -> OrchestratorClient
 
 def _workspace_path(value: str) -> Path:
     return Path(value).resolve()
+
+
+def _policy_directory(workspace: Path, checkout: Path) -> Path:
+    candidate = workspace / "tool-policy"
+    try:
+        candidate.relative_to(checkout.resolve())
+    except ValueError:
+        return candidate
+    return checkout.resolve().parent / f".{checkout.resolve().name}-factory-runner-policy"
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -203,10 +239,6 @@ def _optional_str(value: object) -> str | None:
     return text or None
 
 
-def _command_parts(command: str) -> list[str]:
-    return command.split()
-
-
 def _commit_message(brief: RunnerBrief, attempt: int) -> str:
     return (
         f"feat: implement SDS unit {brief.work_unit.id}\n\n"
@@ -245,7 +277,7 @@ def _prepare_claimed_workspace(
     prompt_title: str,
     claim_idempotency_key: str,
     start_idempotency_key_prefix: str,
-) -> tuple[int, Path]:
+) -> tuple[int, Path, Path]:
     permissions = validate_authority(
         brief.authority.envelope,
         work_unit_id=work_unit_id,
@@ -258,6 +290,18 @@ def _prepare_claimed_workspace(
     if not permissions.can_claim:
         typer.echo("authority does not allow orchestrator claim", err=True)
         raise typer.Exit(code=1)
+
+    workspace = _workspace_path(workspace_dir)
+    try:
+        policy_path, settings_path = write_tool_policy(
+            _policy_directory(workspace, Path.cwd()),
+            Path.cwd(),
+            permissions.allowed_commands,
+            brief.authority.fingerprint,
+        )
+    except ValueError as error:
+        typer.echo(f"unable to write tool policy: {error}", err=True)
+        raise typer.Exit(code=1) from None
 
     claim = client.claim(
         work_unit_id,
@@ -283,7 +327,6 @@ def _prepare_claimed_workspace(
         },
     )
 
-    workspace = _workspace_path(workspace_dir)
     _write_json(workspace / "brief.json", _sanitize_runner_brief(brief))
     (workspace / "prompt.md").write_text(
         _prompt(brief, permissions.allowed_commands, title=prompt_title)
@@ -292,22 +335,30 @@ def _prepare_claimed_workspace(
         workspace / "run.json",
         {
             "attempt": attempt,
+            "authority_fingerprint": brief.authority.fingerprint,
             # The commit the agent starts from. finalize compares HEAD against it to tell
             # "the agent changed nothing" apart from "the agent committed its own work",
             # which leave an identically clean `git status` behind.
             "base_sha": _run_command(["git", "rev-parse", "HEAD"]).strip(),
+            "checkout_root": str(Path.cwd().resolve()),
             "claim_id": claim["claim_id"],
             "context_snapshot_id": context_snapshot_id,
             "lease_expires_at": claim.get("expires_at"),
             "lease_token": lease_token,
             "package_revision_id": brief.package.revision_id,
+            "policy_digest": policy_digest(
+                fingerprint=brief.authority.fingerprint,
+                allowed_commands=permissions.allowed_commands,
+                checkout=Path.cwd(),
+            ),
+            "policy_file": str(policy_path),
             "runtime": runtime,
             "submit_expected_version": int(start["version"]),
-            "verification_commands": list(permissions.allowed_commands),
+            "settings_file": str(settings_path),
             "work_unit_id": work_unit_id,
         },
     )
-    return attempt, workspace
+    return attempt, workspace, settings_path
 
 
 @app.command()
@@ -353,7 +404,7 @@ def prepare_run(
         target_repo=brief.target.repository,
         current_repo=current_repository,
     )
-    attempt, workspace = _prepare_claimed_workspace(
+    attempt, workspace, settings_path = _prepare_claimed_workspace(
         client=client,
         brief=brief,
         work_unit_id=work_unit_id,
@@ -367,6 +418,7 @@ def prepare_run(
     _write_github_output(
         prompt_file=str(workspace / "prompt.md"),
         allowed_tools=",".join(permissions.allowed_tools),
+        settings_file=str(settings_path),
     )
     typer.echo(f"prepared work unit {work_unit_id} attempt {attempt}")
 
@@ -381,7 +433,7 @@ def local_heavy_prepare(
 ) -> None:
     client = _client(orchestrator_url, credential_key_id)
     brief = client.get_runner_brief(work_unit_id)
-    attempt, _workspace = _prepare_claimed_workspace(
+    attempt, _workspace, _settings_path = _prepare_claimed_workspace(
         client=client,
         brief=brief,
         work_unit_id=work_unit_id,
@@ -439,6 +491,17 @@ def local_heavy_reclaim(
         target_repo=brief.target.repository,
         current_repo=current_repository,
     )
+    workspace = _workspace_path(workspace_dir)
+    try:
+        policy_path, settings_path = write_tool_policy(
+            _policy_directory(workspace, Path.cwd()),
+            Path.cwd(),
+            permissions.allowed_commands,
+            brief.authority.fingerprint,
+        )
+    except ValueError as error:
+        typer.echo(f"unable to write tool policy: {error}", err=True)
+        raise typer.Exit(code=1) from None
     reclaim_key = idempotency_key or f"local-heavy:{work_unit_id}:reclaim:{uuid.uuid4()}"
     grant = client.reclaim_expired_claim(
         work_unit_id,
@@ -448,7 +511,6 @@ def local_heavy_reclaim(
     )
     attempt = int(grant["attempt"])
     context_snapshot_id = _optional_str(grant.get("context_snapshot_id"))
-    workspace = _workspace_path(workspace_dir)
     _write_json(workspace / "brief.json", _sanitize_runner_brief(brief))
     (workspace / "prompt.md").write_text(
         _prompt(brief, permissions.allowed_commands, title="Local-Heavy Runtime Work Unit")
@@ -457,14 +519,22 @@ def local_heavy_reclaim(
         workspace / "run.json",
         {
             "attempt": attempt,
+            "authority_fingerprint": brief.authority.fingerprint,
+            "checkout_root": str(Path.cwd().resolve()),
             "claim_id": grant["claim_id"],
             "context_snapshot_id": context_snapshot_id,
             "lease_expires_at": grant.get("expires_at"),
             "lease_token": str(grant["lease_token"]),
             "package_revision_id": brief.package.revision_id,
+            "policy_digest": policy_digest(
+                fingerprint=brief.authority.fingerprint,
+                allowed_commands=permissions.allowed_commands,
+                checkout=Path.cwd(),
+            ),
+            "policy_file": str(policy_path),
             "runtime": "local-heavy",
             "submit_expected_version": brief.work_unit.version + 1,
-            "verification_commands": list(permissions.allowed_commands),
+            "settings_file": str(settings_path),
             "work_unit_id": work_unit_id,
         },
     )
@@ -485,12 +555,22 @@ def _finalize_workspace(
         typer.echo("workspace work unit mismatch", err=True)
         raise typer.Exit(code=1)
 
+    verification_commands = _refreshed_verification_commands(
+        client=client,
+        work_unit_id=work_unit_id,
+        run=run,
+        checkout=Path.cwd(),
+    )
+
     verification_summaries: list[str] = []
     verification_payloads: list[dict[str, object]] = []
     verification_environment = _verification_environment(Path.cwd())
-    for command in run.get("verification_commands", []):
-        command_text = str(command)
-        _run_command(_command_parts(command_text), env=verification_environment)
+    for command_text in verification_commands:
+        _run_command(
+            ["/bin/bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", command_text],
+            cwd=Path.cwd(),
+            env=verification_environment,
+        )
         verification_summaries.append(f"{command_text}: passed")
         verification_payloads.append(
             {
@@ -602,6 +682,54 @@ def _finalize_workspace(
         },
     )
     typer.echo(f"{success_prefix} {work_unit_id}: {pr_url}")
+
+
+def _refreshed_verification_commands(
+    *,
+    client: OrchestratorClient,
+    work_unit_id: str,
+    run: dict[str, Any],
+    checkout: Path,
+) -> tuple[str, ...]:
+    refreshed_brief = client.get_runner_brief(work_unit_id)
+    saved_fingerprint = run.get("authority_fingerprint")
+    if (
+        not isinstance(saved_fingerprint, str)
+        or refreshed_brief.authority.fingerprint != saved_fingerprint
+    ):
+        typer.echo("authority fingerprint changed before finalization", err=True)
+        raise typer.Exit(code=1)
+    try:
+        permissions = validate_authority(
+            refreshed_brief.authority.envelope,
+            work_unit_id=work_unit_id,
+            target_repo=refreshed_brief.target.repository,
+            current_repo=refreshed_brief.target.repository,
+        )
+        policy_file = Path(run["policy_file"])
+        saved_checkout = Path(run["checkout_root"]).resolve(strict=True)
+        policy_fingerprint, policy_commands, policy_checkout, current_digest = read_policy(
+            policy_file
+        )
+        expected_digest = policy_digest(
+            fingerprint=refreshed_brief.authority.fingerprint,
+            allowed_commands=permissions.allowed_commands,
+            checkout=saved_checkout,
+        )
+    except (KeyError, TypeError, ValueError, OSError) as error:
+        typer.echo(f"authority policy is invalid: {error}", err=True)
+        raise typer.Exit(code=1) from None
+    if (
+        policy_fingerprint != refreshed_brief.authority.fingerprint
+        or policy_commands != permissions.allowed_commands
+        or saved_checkout != checkout.resolve()
+        or policy_checkout != saved_checkout
+        or run.get("policy_digest") != current_digest
+        or current_digest != expected_digest
+    ):
+        typer.echo("authority policy changed before finalization", err=True)
+        raise typer.Exit(code=1)
+    return permissions.allowed_commands
 
 
 @app.command("finalize-run")
