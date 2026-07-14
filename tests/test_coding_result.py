@@ -49,6 +49,38 @@ def test_classify_execution_file_accepts_one_success_result_in_json_lines(tmp_pa
 @pytest.mark.parametrize(
     "content",
     [
+        '[{"type":"result","subtype":"success"}]',
+        '{"type":"result","subtype":"success"}\n',
+    ],
+    ids=["json-array", "json-lines"],
+)
+def test_classify_execution_file_rejects_result_without_explicit_is_error(
+    tmp_path: Path, content: str
+) -> None:
+    path = _write_execution(tmp_path, content)
+
+    with pytest.raises(CodingResultError):
+        classify_execution_file(path)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        '[{"type":"result","subtype":"success","is_error":false},{"type":"assistant"}]',
+        '{"type":"result","subtype":"success","is_error":false}\n{"type":"assistant"}\n',
+    ],
+    ids=["json-array", "json-lines"],
+)
+def test_classify_execution_file_rejects_records_after_result(tmp_path: Path, content: str) -> None:
+    path = _write_execution(tmp_path, content)
+
+    with pytest.raises(CodingResultError):
+        classify_execution_file(path)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
         '[{"type":"result","subtype":"error_max_turns","is_error":false}]',
         '[{"type":"result","subtype":"success","is_error":true}]',
         "[]",

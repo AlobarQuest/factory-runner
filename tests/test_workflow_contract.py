@@ -93,21 +93,30 @@ def test_workflow_pins_runner_and_coding_action_before_any_claim() -> None:
     workflow_call_inputs = data["on"]["workflow_call"]["inputs"]
     dispatch_inputs = data["on"]["workflow_dispatch"]["inputs"]
 
-    assert workflow_call_inputs["runner_revision"]["required"] is True
-    assert re.fullmatch(r"[0-9a-f]{40}", dispatch_inputs["runner_revision"]["default"])
-    assert dispatch_inputs["runner_revision"]["default"] == (
-        "5762c0db721ff22ecabb612b6507cd85a95965eb"
+    assert "runner_revision" not in workflow_call_inputs
+    assert "runner_revision" not in dispatch_inputs
+    assert (
+        'uv tool install "git+https://github.com/AlobarQuest/factory-runner.git@'
+        '5762c0db721ff22ecabb612b6507cd85a95965eb"' in workflow
     )
     assert (
-        "git+https://github.com/AlobarQuest/factory-runner.git@${{ inputs.runner_revision }}"
-        in workflow
-    )
-    assert "factory-runner verify-install-revision" in workflow
+        "factory-runner verify-install-revision --expected "
+        '"5762c0db721ff22ecabb612b6507cd85a95965eb"'
+    ) in workflow
+    assert "inputs.runner_revision" not in workflow
     assert "factory-runner.git@beta" not in workflow
     assert "uv tool install git+https://github.com/AlobarQuest/factory-runner.git\n" not in workflow
     assert "anthropics/claude-code-base-action@e8132bc5e637a42c27763fc757faa37e1ee43b34" in workflow
     names = [step.get("name") for step in steps]
     assert names.index("Verify factory runner revision") < names.index("Prepare scoped run")
+
+
+def test_workflow_pins_executable_actions_to_exact_commits() -> None:
+    data = yaml.safe_load(Path(".github/workflows/factory-runner.yml").read_text())
+    uses = [step.get("uses") for step in data["jobs"]["run"]["steps"] if step.get("uses")]
+
+    assert "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" in uses
+    assert "astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86" in uses
 
 
 def test_workflow_classifies_coding_result_before_finalizing_and_reports_it_as_coding_failure() -> (

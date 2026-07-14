@@ -49,16 +49,17 @@ def _execution_records(path: Path) -> list[dict[str, Any]]:
 
 def classify_execution_file(path: Path) -> CodingResult:
     """Accept exactly one non-error terminal success from an action execution log."""
-    results = [record for record in _execution_records(path) if record.get("type") == "result"]
-    if len(results) != 1:
+    records = _execution_records(path)
+    results = [record for record in records if record.get("type") == "result"]
+    if len(results) != 1 or results[0] is not records[-1]:
         raise CodingResultError("coding result is not a single terminal result")
 
     result = results[0]
     subtype = result.get("subtype")
-    is_error = result.get("is_error", False)
+    is_error = result.get("is_error")
     if not isinstance(subtype, str) or not isinstance(is_error, bool):
         raise CodingResultError("coding result is malformed")
-    if subtype != "success" or is_error is True:
+    if subtype != "success" or is_error is not False:
         raise CodingResultError("coding result is not successful")
     return CodingResult(subtype=subtype, is_error=is_error)
 

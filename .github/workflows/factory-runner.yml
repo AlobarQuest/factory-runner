@@ -12,11 +12,6 @@ name: Factory Runner
         required: false
         default: https://sds.alobar.net
         type: string
-      runner_revision:
-        description: Immutable factory-runner commit SHA
-        required: true
-        default: 5762c0db721ff22ecabb612b6507cd85a95965eb
-        type: string
   workflow_call:
     inputs:
       work_unit_id:
@@ -25,9 +20,6 @@ name: Factory Runner
       orchestrator_url:
         required: false
         default: https://sds.alobar.net
-        type: string
-      runner_revision:
-        required: true
         type: string
     secrets:
       FACTORY_RUNNER_TOKEN:
@@ -54,19 +46,19 @@ jobs:
       WORK_UNIT_ID: ${{ inputs.work_unit_id }}
       CURRENT_REPOSITORY: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: true
           # PR-author identity so pushes/PRs trigger target-repo CI (not gated like GITHUB_TOKEN)
           token: ${{ secrets.FACTORY_PR_TOKEN }}
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
       - name: Install pinned factory runner
-        run: uv tool install "git+https://github.com/AlobarQuest/factory-runner.git@${{ inputs.runner_revision }}"
+        run: uv tool install "git+https://github.com/AlobarQuest/factory-runner.git@5762c0db721ff22ecabb612b6507cd85a95965eb"
 
       - name: Verify factory runner revision
-        run: factory-runner verify-install-revision --expected "${{ inputs.runner_revision }}"
+        run: factory-runner verify-install-revision --expected "5762c0db721ff22ecabb612b6507cd85a95965eb"
 
       - name: Prepare scoped run
         id: prepare
