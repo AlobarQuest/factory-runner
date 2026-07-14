@@ -219,7 +219,10 @@ def test_prepare_run_claims_starts_and_writes_workspace(tmp_path: Path) -> None:
     assert calls[3][0] == "start"
 
 
-def test_finalize_run_commits_pr_evidence_and_submits(tmp_path: Path) -> None:
+@pytest.mark.parametrize("venv_exists", [True, False])
+def test_finalize_run_commits_pr_evidence_and_submits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, venv_exists: bool
+) -> None:
     brief = _runner_brief()
     (tmp_path / "brief.json").write_text(brief.model_dump_json())
     (tmp_path / "run.json").write_text(
@@ -237,6 +240,12 @@ def test_finalize_run_commits_pr_evidence_and_submits(tmp_path: Path) -> None:
         )
     )
     calls: list[tuple[str, object]] = []
+    run_calls: list[tuple[list[str], dict[str, object]]] = []
+    venv_bin = tmp_path / ".venv" / "bin"
+    if venv_exists:
+        venv_bin.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
 
     class FakeClient:
         def __init__(self, *, base_url: str, credential_key_id: str, token: str) -> None:
@@ -254,8 +263,9 @@ def test_finalize_run_commits_pr_evidence_and_submits(tmp_path: Path) -> None:
             calls.append(("submit", (unit_id, payload)))
             return {"unit_id": unit_id, "state": "submitted", "version": 6}
 
-    def fake_run(command: list[str], **_kwargs: object) -> str:
+    def fake_run(command: list[str], **kwargs: object) -> str:
         calls.append(("run", command))
+        run_calls.append((command, kwargs))
         if command[:3] == ["git", "status", "--porcelain"]:
             return " M src/example.py\n"
         if command[:3] == ["git", "rev-parse", "HEAD"]:
@@ -291,6 +301,11 @@ def test_finalize_run_commits_pr_evidence_and_submits(tmp_path: Path) -> None:
         cli_module._run_command = original_run
 
     assert result.exit_code == 0, result.output
+    verification_call = next(call for call in run_calls if call[0] == ["make", "check"])
+    verification_environment = cast("dict[str, str]", verification_call[1]["env"])
+    expected_path = f"{venv_bin}:/usr/bin:/bin" if venv_exists else "/usr/bin:/bin"
+    assert verification_environment["PATH"] == expected_path
+    assert all("env" not in kwargs for command, kwargs in run_calls if command != ["make", "check"])
     run_commands = [item for name, item in calls if name == "run"]
     assert ["make", "check"] in run_commands
     commit_commands = [item for item in run_commands if isinstance(item, list) and "commit" in item]
