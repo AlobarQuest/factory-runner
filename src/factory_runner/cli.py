@@ -168,6 +168,17 @@ def _run_command(command: list[str], **kwargs: Any) -> str:
     return completed.stdout
 
 
+def _verification_environment(repo_root: Path) -> dict[str, str]:
+    environment = os.environ.copy()
+    venv_bin = repo_root / ".venv" / "bin"
+    if venv_bin.is_dir():
+        inherited_path = environment.get("PATH")
+        environment["PATH"] = (
+            f"{venv_bin}{os.pathsep}{inherited_path}" if inherited_path else str(venv_bin)
+        )
+    return environment
+
+
 def _load_workspace(workspace_dir: str) -> tuple[RunnerBrief, dict[str, Any]]:
     workspace = _workspace_path(workspace_dir)
     brief = RunnerBrief.model_validate_json((workspace / "brief.json").read_text())
@@ -476,9 +487,10 @@ def _finalize_workspace(
 
     verification_summaries: list[str] = []
     verification_payloads: list[dict[str, object]] = []
+    verification_environment = _verification_environment(Path.cwd())
     for command in run.get("verification_commands", []):
         command_text = str(command)
-        _run_command(_command_parts(command_text))
+        _run_command(_command_parts(command_text), env=verification_environment)
         verification_summaries.append(f"{command_text}: passed")
         verification_payloads.append(
             {
