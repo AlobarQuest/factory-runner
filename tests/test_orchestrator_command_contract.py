@@ -19,7 +19,7 @@ from pathlib import Path
 from factory_runner.evidence import build_pr_opened_evidence, build_verification_evidence
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "orchestrator_command_contract.json"
-CONTRACT_SHA256 = "15911dbbf9a0fd4dcd57cfecfc4b282f7fdee96285acbd5f5684c0ec7c161dae"
+CONTRACT_SHA256 = "4394f6c3a51c42efd766408c17b808e35de0a1b062c1b51e39e1ba73d306a421"
 
 _COMMON = {
     "revision_id": "3f242a84-deaf-4cbd-bb66-1870235c6411",

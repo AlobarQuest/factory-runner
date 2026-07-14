@@ -1,8 +1,10 @@
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
 from factory_runner.models import RunnerBrief
+
+FailureReason = Literal["coding_action_failed", "finalization_failed"]
 
 
 def _describe_error(response: httpx.Response) -> str:
@@ -132,6 +134,28 @@ class OrchestratorClient:
 
     def submit(self, unit_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         return self.command(unit_id, "submit", payload or {})
+
+    def fail(
+        self,
+        unit_id: str,
+        *,
+        expected_version: int,
+        idempotency_key: str,
+        attempt: int,
+        lease_token: str,
+        reason: FailureReason,
+    ) -> dict[str, Any]:
+        return self.command(
+            unit_id,
+            "fail",
+            {
+                "expected_version": expected_version,
+                "idempotency_key": idempotency_key,
+                "attempt": attempt,
+                "lease_token": lease_token,
+                "reason": reason,
+            },
+        )
 
     def command(self, unit_id: str, command: str, payload: dict[str, Any]) -> dict[str, Any]:
         response = self._request(
