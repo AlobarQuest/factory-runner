@@ -15,7 +15,7 @@ name: Factory Runner
       runner_revision:
         description: Immutable factory-runner commit SHA
         required: true
-        default: 580a98037b13e0b690ce41caa2d3424232a9de74
+        default: 5762c0db721ff22ecabb612b6507cd85a95965eb
         type: string
   workflow_call:
     inputs:
