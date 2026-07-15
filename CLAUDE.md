@@ -5,3 +5,13 @@
 - Finalizer verification commands must use the target repository's local tool
   environment. When `.venv/bin` exists at the repository root, it precedes the
   inherited `PATH`; other runner subprocesses keep their inherited environment.
+- allowed_commands is enforced by a runner-owned exact-match PreToolUse hook;
+  prompt text and bare action permissions are not the authority boundary. The
+  hook must exit 2 to deny.
+- GitHub step success is not coding success. Finalization requires a parsed
+  terminal success result; error_max_turns is coding_action_failed even when an
+  action version emits is_error:false.
+- The trusted pilot allows `repo.edit` to change executable verification wrappers,
+  including Makefile targets, pyproject configuration, and test code. This release
+  is not hostile-agent-safe and must not be cited as proof of hardened command
+  semantics.

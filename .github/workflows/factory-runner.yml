@@ -46,16 +46,19 @@ jobs:
       WORK_UNIT_ID: ${{ inputs.work_unit_id }}
       CURRENT_REPOSITORY: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: true
           # PR-author identity so pushes/PRs trigger target-repo CI (not gated like GITHUB_TOKEN)
           token: ${{ secrets.FACTORY_PR_TOKEN }}
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
-      - name: Install factory runner
-        run: uv tool install git+https://github.com/AlobarQuest/factory-runner.git
+      - name: Install pinned factory runner
+        run: uv tool install "git+https://github.com/AlobarQuest/factory-runner.git@562fe3cf8e9bc96cacaaf7458842b6d596c0abda"
+
+      - name: Verify factory runner revision
+        run: factory-runner verify-install-revision --expected "562fe3cf8e9bc96cacaaf7458842b6d596c0abda"
 
       - name: Prepare scoped run
         id: prepare
@@ -78,23 +81,31 @@ jobs:
       # retired `claude-sonnet-4-20250514`.
       - name: Run scoped coding action
         id: coding
-        uses: anthropics/claude-code-base-action@beta
+        uses: anthropics/claude-code-base-action@e8132bc5e637a42c27763fc757faa37e1ee43b34
         with:
           model: claude-sonnet-5
           prompt_file: ${{ steps.prepare.outputs.prompt_file }}
           allowed_tools: ${{ steps.prepare.outputs.allowed_tools }}
+          settings: ${{ steps.prepare.outputs.settings_file }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # The approved authority envelope carries budgets.max_llm_calls, which the
           # runner does not yet read. Until it does, this literal is the effective
           # budget. 10 exhausted itself on exploration and committed nothing.
           max_turns: "40"
 
+      - name: Classify coding result
+        id: classify
+        if: steps.coding.outcome == 'success'
+        run: |
+          factory-runner classify-coding-result \
+            --execution-file "${{ steps.coding.outputs.execution_file }}"
+
       # Only meaningful once prepare has claimed the unit. Without this guard an
       # earlier failure runs finalize against an unclaimed unit, burying the real
       # error under a second one.
       - name: Finalize scoped run
         id: finalize
-        if: steps.coding.outcome == 'success'
+        if: steps.coding.outcome == 'success' && steps.classify.outcome == 'success'
         env:
           FACTORY_RUNNER_TOKEN: ${{ secrets.FACTORY_RUNNER_TOKEN }}
           FACTORY_RUNNER_CREDENTIAL_KEY_ID: ${{ secrets.FACTORY_RUNNER_CREDENTIAL_KEY_ID }}
@@ -111,7 +122,7 @@ jobs:
         if: >-
           always() &&
           steps.prepare.outcome == 'success' &&
-          (steps.coding.outcome == 'failure' || steps.finalize.outcome == 'failure')
+          (steps.coding.outcome == 'failure' || steps.classify.outcome == 'failure' || steps.finalize.outcome == 'failure')
         env:
           FACTORY_RUNNER_TOKEN: ${{ secrets.FACTORY_RUNNER_TOKEN }}
           FACTORY_RUNNER_CREDENTIAL_KEY_ID: ${{ secrets.FACTORY_RUNNER_CREDENTIAL_KEY_ID }}

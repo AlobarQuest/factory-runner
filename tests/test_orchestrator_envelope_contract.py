@@ -20,10 +20,10 @@ from factory_runner.authority import validate_authority
 from factory_runner.models import AuthorityEnvelope
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "runner_authority_envelope.json"
-CONTRACT_SHA256 = "4ec8e88ab4e7d61003072bb15e505e4259fcef1def94675c6bc1b37a8bb17dc6"
+CONTRACT_SHA256 = "049ab53e2b257fa3d7eb24748a4278ffc7e0e91f8174b05220eefd7d526e5a56"
 
 WORK_UNIT_ID = "8302c75c-e083-5a67-bfd6-63021b90d6da"
-TARGET_REPOSITORY = "AlobarQuest/brain"
+TARGET_REPOSITORY = "AlobarQuest/change-manager"
 
 
 def golden_envelope() -> dict[str, Any]:
@@ -56,7 +56,12 @@ def test_runner_accepts_the_orchestrator_envelope() -> None:
     assert permissions.can_claim
     assert permissions.can_create_pr
     assert permissions.can_submit_evidence
-    assert permissions.allowed_commands == ("make check",)
+    assert permissions.allowed_commands == (
+        "uv add --dev 'httpx2>=2.6.0'",
+        "uv sync --locked",
+        "uv run make check",
+    )
+    assert permissions.mutation_commands == ("uv add --dev 'httpx2>=2.6.0'",)
 
 
 def test_runner_grants_nothing_from_the_orchestrator_only_fields() -> None:

@@ -86,6 +86,69 @@ def test_the_coding_action_pins_a_current_model_via_the_input() -> None:
     assert "ANTHROPIC_MODEL" not in (step.get("env") or {})
 
 
+def test_workflow_pins_runner_and_coding_action_before_any_claim() -> None:
+    data = yaml.safe_load(Path(".github/workflows/factory-runner.yml").read_text())
+    workflow = Path(".github/workflows/factory-runner.yml").read_text()
+    steps = data["jobs"]["run"]["steps"]
+    workflow_call_inputs = data["on"]["workflow_call"]["inputs"]
+    dispatch_inputs = data["on"]["workflow_dispatch"]["inputs"]
+
+    assert "runner_revision" not in workflow_call_inputs
+    assert "runner_revision" not in dispatch_inputs
+    assert (
+        'uv tool install "git+https://github.com/AlobarQuest/factory-runner.git@'
+        '562fe3cf8e9bc96cacaaf7458842b6d596c0abda"' in workflow
+    )
+    assert (
+        "factory-runner verify-install-revision --expected "
+        '"562fe3cf8e9bc96cacaaf7458842b6d596c0abda"'
+    ) in workflow
+    assert "inputs.runner_revision" not in workflow
+    assert "factory-runner.git@beta" not in workflow
+    assert "uv tool install git+https://github.com/AlobarQuest/factory-runner.git\n" not in workflow
+    assert "anthropics/claude-code-base-action@e8132bc5e637a42c27763fc757faa37e1ee43b34" in workflow
+    names = [step.get("name") for step in steps]
+    assert names.index("Verify factory runner revision") < names.index("Prepare scoped run")
+
+
+def test_workflow_pins_executable_actions_to_exact_commits() -> None:
+    data = yaml.safe_load(Path(".github/workflows/factory-runner.yml").read_text())
+    uses = [step.get("uses") for step in data["jobs"]["run"]["steps"] if step.get("uses")]
+
+    assert "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" in uses
+    assert "astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86" in uses
+
+
+def test_workflow_classifies_coding_result_before_finalizing_and_reports_it_as_coding_failure() -> (
+    None
+):
+    steps = yaml.safe_load(Path(".github/workflows/factory-runner.yml").read_text())["jobs"]["run"][
+        "steps"
+    ]
+    coding = _named_step("Run scoped coding action")
+    classify = _named_step("Classify coding result")
+    finalize = _named_step("Finalize scoped run")
+    report = _named_step("Report failed scoped run")
+    names = [step.get("name") for step in steps]
+
+    assert names.index("Install pinned factory runner") < names.index(
+        "Verify factory runner revision"
+    )
+    assert names.index("Verify factory runner revision") < names.index("Run scoped coding action")
+    assert names.index("Run scoped coding action") < names.index("Classify coding result")
+    assert names.index("Classify coding result") < names.index("Finalize scoped run")
+    assert classify["id"] == "classify"
+    assert classify["if"].strip() == "steps.coding.outcome == 'success'"
+    assert "--execution-file" in classify["run"]
+    assert "steps.coding.outputs.execution_file" in classify["run"]
+    assert finalize["if"].strip() == (
+        "steps.coding.outcome == 'success' && steps.classify.outcome == 'success'"
+    )
+    assert coding["with"]["settings"] == "${{ steps.prepare.outputs.settings_file }}"
+    assert "steps.classify.outcome == 'failure'" in report["if"]
+    assert 'if [[ "${{ steps.finalize.outcome }}" == "failure" ]]; then' in report["run"]
+
+
 def test_the_workspace_lives_outside_the_repository_checkout() -> None:
     """`.factory-runner/` inside the checkout makes `git status` never empty.
 
@@ -116,13 +179,16 @@ def test_failed_coding_or_finalization_is_reported_without_masking_the_failure()
 
     assert coding["id"] == "coding"
     assert finalize["id"] == "finalize"
-    assert finalize["if"].strip() == "steps.coding.outcome == 'success'"
+    assert finalize["if"].strip() == (
+        "steps.coding.outcome == 'success' && steps.classify.outcome == 'success'"
+    )
 
     report = _named_step("Report failed scoped run")
     assert report["id"] == "report_failure"
     assert "always()" in report["if"]
     assert "steps.prepare.outcome == 'success'" in report["if"]
     assert "steps.coding.outcome == 'failure'" in report["if"]
+    assert "steps.classify.outcome == 'failure'" in report["if"]
     assert "steps.finalize.outcome == 'failure'" in report["if"]
     assert "factory-runner fail-run" in report["run"]
     assert "continue-on-error" not in coding

@@ -1,3 +1,5 @@
+from typing import Any
+
 from factory_runner.models import AuthorityEnvelope, RunnerPermissions
 
 SUPPORTED_CAPABILITIES = frozenset(
@@ -26,12 +28,14 @@ def validate_authority(
 ) -> RunnerPermissions:
     _validate_capabilities(envelope)
     _validate_constraints(envelope, work_unit_id, target_repo, current_repo)
-    allowed_commands = _validate_commands(envelope)
+    allowed_commands, mutation_commands = _validate_commands(envelope)
     tools = _infer_tools(envelope)
 
     return RunnerPermissions(
         allowed_tools=tuple(dict.fromkeys(tools)),
         allowed_commands=allowed_commands,
+        mutation_commands=mutation_commands,
+        can_edit=_allowed(envelope, "repo.edit"),
         can_create_pr=_allowed(envelope, "github.pr.create"),
         can_submit_evidence=_allowed(envelope, "orchestrator.evidence.write"),
         can_claim=_allowed(envelope, "orchestrator.claim"),
@@ -61,18 +65,33 @@ def _validate_constraints(
         raise AuthorityError("target repository mismatch")
 
 
-def _validate_commands(envelope: AuthorityEnvelope) -> tuple[str, ...]:
+def _validate_commands(envelope: AuthorityEnvelope) -> tuple[tuple[str, ...], tuple[str, ...]]:
     if _allowed(envelope, "command.run"):
-        commands = envelope.constraints.get("allowed_commands")
-        if (
-            not isinstance(commands, list)
-            or not commands
-            or not all(isinstance(c, str) for c in commands)
-        ):
-            raise AuthorityError("command.run requires constraints.allowed_commands")
-        return tuple(commands)
+        allowed_commands = _non_empty_string_list(envelope.constraints.get("allowed_commands"))
+        if allowed_commands is None:
+            raise AuthorityError(
+                "constraints.allowed_commands must be a non-empty list of non-empty strings"
+            )
+        mutation_commands = _non_empty_string_list(envelope.constraints.get("mutation_commands"))
+        if mutation_commands is None:
+            raise AuthorityError(
+                "constraints.mutation_commands must be a non-empty list of non-empty strings"
+            )
+        if any(command not in allowed_commands for command in mutation_commands):
+            raise AuthorityError(
+                "every mutation command must also appear in constraints.allowed_commands"
+            )
+        return allowed_commands, mutation_commands
 
-    return ()
+    return (), ()
+
+
+def _non_empty_string_list(value: Any) -> tuple[str, ...] | None:
+    if not isinstance(value, list) or not value:
+        return None
+    if any(not isinstance(item, str) or not item.strip() for item in value):
+        return None
+    return tuple(value)
 
 
 def _infer_tools(envelope: AuthorityEnvelope) -> list[str]:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -8,7 +9,90 @@ import pytest
 from typer.testing import CliRunner
 
 from factory_runner.cli import app
+from factory_runner.client import OrchestratorClient
+from factory_runner.command_policy import write_tool_policy
 from factory_runner.models import RunnerBrief
+
+
+def _tool_policy(tmp_path: Path) -> Path:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    policy, _settings = write_tool_policy(
+        tmp_path.with_name(f"{tmp_path.name}-policy"),
+        checkout,
+        ("uv sync --locked",),
+        "0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31",
+        edit_allowed=True,
+    )
+    return policy
+
+
+def _finalization_authority(tmp_path: Path, brief: RunnerBrief) -> dict[str, object]:
+    from factory_runner.command_policy import policy_digest
+
+    policy, _settings = write_tool_policy(
+        tmp_path.with_name(f"{tmp_path.name}-policy"),
+        Path.cwd(),
+        tuple(brief.authority.envelope.constraints["allowed_commands"]),
+        brief.authority.fingerprint,
+        edit_allowed=True,
+        protected_paths=(tmp_path,),
+    )
+    return {
+        "authority_fingerprint": brief.authority.fingerprint,
+        "checkout_root": str(Path.cwd().resolve()),
+        "policy_digest": policy_digest(
+            fingerprint=brief.authority.fingerprint,
+            allowed_commands=tuple(brief.authority.envelope.constraints["allowed_commands"]),
+            checkout=Path.cwd(),
+            edit_allowed=True,
+            protected_paths=(tmp_path,),
+        ),
+        "policy_file": str(policy),
+    }
+
+
+def test_authorize_tool_cli_allows_exact_bash_and_contained_edit(tmp_path: Path) -> None:
+    policy = _tool_policy(tmp_path)
+    edit_target = tmp_path / "checkout" / "file.py"
+    edit_target.write_text("x = 1\n")
+
+    for hook_input in (
+        {"tool_name": "Bash", "tool_input": {"command": "uv sync --locked"}},
+        {"tool_name": "Edit", "tool_input": {"file_path": str(edit_target)}},
+    ):
+        result = CliRunner().invoke(
+            app,
+            ["authorize-tool", "--policy-file", str(policy)],
+            input=json.dumps(hook_input),
+        )
+        assert result.exit_code == 0, result.output
+        assert result.output == ""
+
+
+@pytest.mark.parametrize(
+    "hook_input",
+    [
+        {"tool_name": "Bash", "tool_input": {"command": "uv sync --locked; whoami"}},
+        {"tool_name": "Edit", "tool_input": {"file_path": "../outside.txt"}},
+        {"tool_name": "Read", "tool_input": {"file_path": "README.md"}},
+        {"tool_name": "Bash", "tool_input": {}},
+    ],
+)
+def test_authorize_tool_cli_denies_with_exit_two_and_bounded_stderr(
+    tmp_path: Path, hook_input: dict[str, object]
+) -> None:
+    policy = _tool_policy(tmp_path)
+
+    result = CliRunner().invoke(
+        app,
+        ["authorize-tool", "--policy-file", str(policy)],
+        input=json.dumps(hook_input),
+    )
+
+    assert result.exit_code == 2
+    assert len(result.stderr) < 200
+    assert "uv sync" not in result.stderr
 
 
 def _runner_brief() -> RunnerBrief:
@@ -33,7 +117,7 @@ def _runner_brief() -> RunnerBrief:
                 "source_commit": "abc123",
             },
             "authority": {
-                "fingerprint": "fingerprint",
+                "fingerprint": "0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31",
                 "envelope": {
                     "capabilities": {
                         "repo.read": "allowed",
@@ -47,6 +131,7 @@ def _runner_brief() -> RunnerBrief:
                         "work_unit_id": "unit-1",
                         "target_repository": "AlobarQuest/orchestrator",
                         "allowed_commands": ["make check"],
+                        "mutation_commands": ["make check"],
                         "secret_values": ["redacted"],
                     },
                 },
@@ -131,7 +216,7 @@ def test_prepare_emits_sanitized_json_contract() -> None:
     assert payload["allowed_commands"] == ["make check"]
     assert payload["context_snapshot_id"] == "snapshot-1"
     assert payload["lease_facts"] == {
-        "authority_fingerprint": "fingerprint",
+        "authority_fingerprint": "0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31",
         "package_revision_id": "rev-1",
         "target_repository": "AlobarQuest/orchestrator",
         "work_unit_id": "unit-1",
@@ -214,9 +299,299 @@ def test_prepare_run_claims_starts_and_writes_workspace(tmp_path: Path) -> None:
     assert manifest["lease_token"] == "lease-redacted"
     assert manifest["submit_expected_version"] == 5
     assert manifest["base_sha"]
+    assert manifest["checkout_root"] == str(Path.cwd().resolve())
+    assert manifest["authority_fingerprint"] == brief.authority.fingerprint
+    assert manifest["policy_digest"]
+    assert "verification_commands" not in manifest
+    policy = Path(manifest["policy_file"])
+    assert policy.is_file()
+    assert policy.is_relative_to(tmp_path.resolve())
+    assert policy.is_relative_to(Path.cwd().resolve()) is False
+    assert json.loads(policy.read_text())["protected_paths"] == [str(tmp_path.resolve())]
+    settings = Path(manifest["settings_file"])
+    assert settings.is_file()
     assert calls[1][0] == "brief"
     assert calls[2][0] == "claim"
     assert calls[3][0] == "start"
+
+
+def test_prepare_run_emits_generated_settings_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    brief = _runner_brief()
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None: ...
+
+        def get_runner_brief(self, _unit_id: str) -> RunnerBrief:
+            return brief
+
+        def claim(self, _unit_id: str, **_kwargs: object) -> dict[str, object]:
+            return {"attempt": 1, "claim_id": "claim-1", "lease_token": "lease", "expires_at": None}
+
+        def start(self, _unit_id: str, _payload: dict[str, object]) -> dict[str, object]:
+            return {"version": 5}
+
+    from factory_runner import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "OrchestratorClient", FakeClient)
+    output = tmp_path / "github-output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    result = CliRunner().invoke(
+        app,
+        [
+            "prepare-run",
+            "--orchestrator-url",
+            "https://sds.alobar.net",
+            "--credential-key-id",
+            "factory-runner-github",
+            "--work-unit-id",
+            "unit-1",
+            "--current-repository",
+            "AlobarQuest/orchestrator",
+            "--workspace-dir",
+            str(tmp_path / "workspace"),
+        ],
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+    )
+
+    assert result.exit_code == 0, result.output
+    values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    assert Path(values["settings_file"]).is_file()
+    assert values["allowed_tools"] == "Read,Edit,Bash,Glob"
+
+
+def test_policy_directory_moves_outside_an_in_checkout_workspace(tmp_path: Path) -> None:
+    from factory_runner.cli import _policy_directory
+
+    checkout = tmp_path / "checkout"
+    workspace = checkout / ".factory-runner"
+    checkout.mkdir()
+
+    policy_dir = _policy_directory(workspace, checkout)
+
+    assert policy_dir.is_relative_to(checkout) is False
+
+
+def test_finalize_replays_refreshed_commands_in_order_with_bash_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    brief = _runner_brief()
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    policy, _settings = write_tool_policy(
+        tmp_path / "policy",
+        checkout,
+        ("uv run python -c \"print('quoted')\"", "uv sync --locked", "uv sync --locked"),
+        brief.authority.fingerprint,
+        edit_allowed=True,
+        protected_paths=(tmp_path,),
+    )
+    brief.authority.envelope.constraints["allowed_commands"] = [
+        "uv run python -c \"print('quoted')\"",
+        "uv sync --locked",
+        "uv sync --locked",
+    ]
+    brief.authority.envelope.constraints["mutation_commands"] = [
+        "uv run python -c \"print('quoted')\"",
+        "uv sync --locked",
+        "uv sync --locked",
+    ]
+    from factory_runner.command_policy import policy_digest
+
+    (tmp_path / "brief.json").write_text(brief.model_dump_json())
+    (tmp_path / "run.json").write_text(
+        json.dumps(
+            {
+                "attempt": 1,
+                "authority_fingerprint": brief.authority.fingerprint,
+                "base_sha": "base",
+                "checkout_root": str(checkout),
+                "context_snapshot_id": None,
+                "lease_token": "lease-redacted",
+                "package_revision_id": "rev-1",
+                "policy_digest": policy_digest(
+                    fingerprint=brief.authority.fingerprint,
+                    allowed_commands=(
+                        "uv run python -c \"print('quoted')\"",
+                        "uv sync --locked",
+                        "uv sync --locked",
+                    ),
+                    checkout=checkout,
+                    edit_allowed=True,
+                    protected_paths=(tmp_path,),
+                ),
+                "policy_file": str(policy),
+                "submit_expected_version": 5,
+                "work_unit_id": "unit-1",
+            }
+        )
+    )
+    calls: list[list[str]] = []
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None: ...
+
+        def get_runner_brief(self, _unit_id: str) -> RunnerBrief:
+            return brief
+
+        def list_evidence(self, _unit_id: str) -> list[dict[str, object]]:
+            return []
+
+        def submit_evidence(self, _unit_id: str, _payload: dict[str, object]) -> dict[str, object]:
+            return {"id": "evidence-1"}
+
+        def submit(self, _unit_id: str, _payload: dict[str, object]) -> dict[str, object]:
+            return {"version": 6}
+
+    def fake_run(command: list[str], **_kwargs: object) -> str:
+        calls.append(command)
+        if command[:3] == ["git", "status", "--porcelain"]:
+            return " M file.py\n"
+        if command[:3] == ["gh", "pr", "create"]:
+            return "https://github.com/AlobarQuest/orchestrator/pull/99\n"
+        return "head\n" if command[:3] == ["git", "rev-parse", "HEAD"] else ""
+
+    from factory_runner import cli as cli_module
+
+    monkeypatch.chdir(checkout)
+    monkeypatch.setattr(cli_module, "OrchestratorClient", FakeClient)
+    monkeypatch.setattr(cli_module, "_run_command", fake_run)
+    result = CliRunner().invoke(
+        app,
+        [
+            "finalize-run",
+            "--orchestrator-url",
+            "https://sds.alobar.net",
+            "--credential-key-id",
+            "factory-runner-github",
+            "--work-unit-id",
+            "unit-1",
+            "--workspace-dir",
+            str(tmp_path),
+        ],
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+    )
+
+    assert result.exit_code == 0, result.output
+    bash_calls = [command for command in calls if command[0] == "/bin/bash"]
+    assert bash_calls == [
+        ["/bin/bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", command]
+        for command in (
+            "uv run python -c \"print('quoted')\"",
+            "uv sync --locked",
+            "uv sync --locked",
+        )
+    ]
+
+
+def test_finalize_stops_before_commands_when_refreshed_authority_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    saved = _runner_brief()
+    refreshed = _runner_brief()
+    refreshed.authority.fingerprint = "f" * 64
+    (tmp_path / "brief.json").write_text(saved.model_dump_json())
+    (tmp_path / "run.json").write_text(
+        json.dumps({"authority_fingerprint": saved.authority.fingerprint, "work_unit_id": "unit-1"})
+    )
+    commands: list[list[str]] = []
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None: ...
+
+        def get_runner_brief(self, _unit_id: str) -> RunnerBrief:
+            return refreshed
+
+    from factory_runner import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "OrchestratorClient", FakeClient)
+    monkeypatch.setattr(
+        cli_module, "_run_command", lambda command, **_kwargs: commands.append(command)
+    )
+    result = CliRunner().invoke(
+        app,
+        [
+            "finalize-run",
+            "--orchestrator-url",
+            "https://sds.alobar.net",
+            "--credential-key-id",
+            "factory-runner-github",
+            "--work-unit-id",
+            "unit-1",
+            "--workspace-dir",
+            str(tmp_path),
+        ],
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+    )
+
+    assert result.exit_code == 1
+    assert "authority fingerprint changed" in result.output
+    assert commands == []
+
+
+def test_refreshed_authority_replay_is_stable_and_preserves_duplicates(tmp_path: Path) -> None:
+    brief = _runner_brief()
+    brief.authority.envelope.constraints["allowed_commands"] = [
+        "uv sync --locked",
+        "uv sync --locked",
+    ]
+    brief.authority.envelope.constraints["mutation_commands"] = ["uv sync --locked"]
+    run = _finalization_authority(tmp_path, brief)
+
+    class FakeClient:
+        def get_runner_brief(self, _unit_id: str) -> RunnerBrief:
+            return brief
+
+    from factory_runner.cli import _refreshed_verification_commands
+
+    first = _refreshed_verification_commands(
+        client=cast(OrchestratorClient, FakeClient()),
+        work_unit_id="unit-1",
+        run=run,
+        checkout=Path.cwd(),
+        protected_paths=(tmp_path,),
+    )
+    second = _refreshed_verification_commands(
+        client=cast(OrchestratorClient, FakeClient()),
+        work_unit_id="unit-1",
+        run=run,
+        checkout=Path.cwd(),
+        protected_paths=(tmp_path,),
+    )
+
+    assert first == second == ("uv sync --locked", "uv sync --locked")
+
+
+def test_exact_bash_execution_preserves_shell_quoting_for_uv(tmp_path: Path) -> None:
+    checkout = tmp_path / "checkout"
+    bin_dir = checkout / "bin"
+    bin_dir.mkdir(parents=True)
+    captured = tmp_path / "uv-args.txt"
+    uv = bin_dir / "uv"
+    uv.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPTURED_ARGS"\n')
+    uv.chmod(0o755)
+    environment = os.environ.copy()
+    environment["CAPTURED_ARGS"] = str(captured)
+    environment["PATH"] = f"{bin_dir}{os.pathsep}{environment['PATH']}"
+
+    from factory_runner.cli import _run_command
+
+    _run_command(
+        [
+            "/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-euo",
+            "pipefail",
+            "-c",
+            "uv run python -c 'print(\"quoted\")'",
+        ],
+        cwd=checkout,
+        env=environment,
+    )
+
+    assert captured.read_text().splitlines() == ["run", "python", "-c", 'print("quoted")']
 
 
 @pytest.mark.parametrize("venv_exists", [True, False])
@@ -224,6 +599,7 @@ def test_finalize_run_commits_pr_evidence_and_submits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, venv_exists: bool
 ) -> None:
     brief = _runner_brief()
+    monkeypatch.chdir(tmp_path)
     (tmp_path / "brief.json").write_text(brief.model_dump_json())
     (tmp_path / "run.json").write_text(
         json.dumps(
@@ -234,8 +610,8 @@ def test_finalize_run_commits_pr_evidence_and_submits(
                 "lease_token": "lease-redacted",
                 "package_revision_id": "rev-1",
                 "submit_expected_version": 5,
-                "verification_commands": ["make check"],
                 "work_unit_id": "unit-1",
+                **_finalization_authority(tmp_path, brief),
             }
         )
     )
@@ -244,12 +620,14 @@ def test_finalize_run_commits_pr_evidence_and_submits(
     venv_bin = tmp_path / ".venv" / "bin"
     if venv_exists:
         venv_bin.mkdir(parents=True)
-    monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
 
     class FakeClient:
         def __init__(self, *, base_url: str, credential_key_id: str, token: str) -> None:
             calls.append(("init", (base_url, credential_key_id, token)))
+
+        def get_runner_brief(self, _unit_id: str) -> RunnerBrief:
+            return brief
 
         def list_evidence(self, unit_id: str) -> list[dict[str, object]]:
             calls.append(("list_evidence", unit_id))
@@ -301,13 +679,23 @@ def test_finalize_run_commits_pr_evidence_and_submits(
         cli_module._run_command = original_run
 
     assert result.exit_code == 0, result.output
-    verification_call = next(call for call in run_calls if call[0] == ["make", "check"])
+    verification_call = next(call for call in run_calls if call[0][-1] == "make check")
     verification_environment = cast("dict[str, str]", verification_call[1]["env"])
     expected_path = f"{venv_bin}:/usr/bin:/bin" if venv_exists else "/usr/bin:/bin"
     assert verification_environment["PATH"] == expected_path
-    assert all("env" not in kwargs for command, kwargs in run_calls if command != ["make", "check"])
+    assert all(
+        "env" not in kwargs for command, kwargs in run_calls if command != verification_call[0]
+    )
     run_commands = [item for name, item in calls if name == "run"]
-    assert ["make", "check"] in run_commands
+    assert [
+        "/bin/bash",
+        "--noprofile",
+        "--norc",
+        "-euo",
+        "pipefail",
+        "-c",
+        "make check",
+    ] in run_commands
     commit_commands = [item for item in run_commands if isinstance(item, list) and "commit" in item]
     assert commit_commands
     commit_message = "\n".join(commit_commands[0])
@@ -324,6 +712,96 @@ def test_finalize_run_commits_pr_evidence_and_submits(
     assert evidence_payload["supersede"] is False
     assert any(name == "list_evidence" for name, _ in calls)
     assert calls[-1][0] == "submit"
+
+
+@pytest.mark.parametrize(
+    ("capability", "message"),
+    [
+        ("github.pr.create", "authority does not allow pull request creation"),
+        ("orchestrator.evidence.write", "authority does not allow evidence submission"),
+    ],
+)
+def test_finalize_refuses_prohibited_capabilities_before_push_pr_or_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capability: str,
+    message: str,
+) -> None:
+    brief = _runner_brief()
+    brief.authority.envelope.capabilities[capability] = "prohibited"
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "brief.json").write_text(brief.model_dump_json())
+    (tmp_path / "run.json").write_text(
+        json.dumps(
+            {
+                "attempt": 1,
+                "claim_id": "claim-1",
+                "context_snapshot_id": "snapshot-1",
+                "lease_token": "lease-redacted",
+                "package_revision_id": "rev-1",
+                "submit_expected_version": 5,
+                "work_unit_id": "unit-1",
+                **_finalization_authority(tmp_path, brief),
+            }
+        )
+    )
+    client_calls: list[str] = []
+    command_calls: list[list[str]] = []
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None: ...
+
+        def get_runner_brief(self, _unit_id: str) -> RunnerBrief:
+            client_calls.append("get_runner_brief")
+            return brief
+
+        def list_evidence(self, _unit_id: str) -> list[dict[str, object]]:
+            client_calls.append("list_evidence")
+            return []
+
+        def submit_evidence(self, _unit_id: str, _payload: dict[str, object]) -> dict[str, object]:
+            client_calls.append("submit_evidence")
+            return {"id": "evidence-1"}
+
+        def submit(self, _unit_id: str, _payload: dict[str, object]) -> dict[str, object]:
+            client_calls.append("submit")
+            return {}
+
+    from factory_runner import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "OrchestratorClient", FakeClient)
+
+    def fake_run(command: list[str], **_kwargs: object) -> str:
+        command_calls.append(command)
+        if command[:3] == ["git", "status", "--porcelain"]:
+            return " M src/example.py\n"
+        if command[:3] == ["git", "rev-parse", "HEAD"]:
+            return "abc123\n"
+        if command[:3] == ["gh", "pr", "create"]:
+            return "https://github.com/AlobarQuest/orchestrator/pull/99\n"
+        return ""
+
+    monkeypatch.setattr(cli_module, "_run_command", fake_run)
+    result = CliRunner().invoke(
+        app,
+        [
+            "finalize-run",
+            "--orchestrator-url",
+            "https://sds.alobar.net",
+            "--credential-key-id",
+            "factory-runner-github",
+            "--work-unit-id",
+            "unit-1",
+            "--workspace-dir",
+            str(tmp_path),
+        ],
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+    )
+
+    assert result.exit_code == 1
+    assert message in result.output
+    assert command_calls == []
+    assert client_calls == ["get_runner_brief"]
 
 
 def test_finalize_run_supersedes_when_prior_evidence_exists(tmp_path: Path) -> None:
@@ -344,8 +822,8 @@ def test_finalize_run_supersedes_when_prior_evidence_exists(tmp_path: Path) -> N
                 "lease_token": "lease-redacted",
                 "package_revision_id": "rev-1",
                 "submit_expected_version": 9,
-                "verification_commands": ["make check"],
                 "work_unit_id": "unit-1",
+                **_finalization_authority(tmp_path, brief),
             }
         )
     )
@@ -353,6 +831,9 @@ def test_finalize_run_supersedes_when_prior_evidence_exists(tmp_path: Path) -> N
 
     class FakeClient:
         def __init__(self, **_: object) -> None: ...
+
+        def get_runner_brief(self, _unit_id: str) -> RunnerBrief:
+            return brief
 
         def list_evidence(self, unit_id: str) -> list[dict[str, object]]:
             # A row from a prior attempt, same AC.
@@ -652,8 +1133,8 @@ def test_local_heavy_renew_updates_workspace_without_printing_lease(tmp_path: Pa
                 "package_revision_id": "rev-1",
                 "runtime": "local-heavy",
                 "submit_expected_version": 5,
-                "verification_commands": ["make check"],
                 "work_unit_id": "unit-1",
+                **_finalization_authority(tmp_path, brief),
             }
         )
     )
@@ -662,6 +1143,9 @@ def test_local_heavy_renew_updates_workspace_without_printing_lease(tmp_path: Pa
     class FakeClient:
         def __init__(self, *, base_url: str, credential_key_id: str, token: str) -> None:
             calls.append(("init", (base_url, credential_key_id, token)))
+
+        def get_runner_brief(self, _unit_id: str) -> RunnerBrief:
+            return brief
 
         def renew(
             self,
@@ -803,6 +1287,87 @@ def test_local_heavy_reclaim_uses_orchestrator_reclaim_api(tmp_path: Path) -> No
     )
 
 
+def test_local_heavy_reclaim_requires_claim_authority_before_policy_or_api(
+    tmp_path: Path,
+) -> None:
+    brief = _runner_brief()
+    brief.authority.envelope.capabilities["orchestrator.claim"] = "prohibited"
+    calls: list[tuple[str, object]] = []
+
+    class FakeClient:
+        def __init__(self, *, base_url: str, credential_key_id: str, token: str) -> None:
+            calls.append(("init", (base_url, credential_key_id, token)))
+
+        def get_runner_brief(self, unit_id: str) -> RunnerBrief:
+            calls.append(("brief", unit_id))
+            return brief
+
+        def reclaim_expired_claim(
+            self,
+            unit_id: str,
+            *,
+            next_owner_id: str,
+            idempotency_key: str,
+            expected_version: int | None = None,
+            standing_context: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            calls.append(
+                (
+                    "reclaim",
+                    (unit_id, next_owner_id, idempotency_key, expected_version, standing_context),
+                )
+            )
+            raise AssertionError("reclaim API must not be called without claim authority")
+
+    from factory_runner import cli as cli_module
+
+    def fail_write_tool_policy(*args: object, **kwargs: object) -> tuple[Path, Path]:
+        calls.append(("policy", (args, kwargs)))
+        raise AssertionError("tool policy must not be generated without claim authority")
+
+    original_client = cli_module.OrchestratorClient
+    original_write_tool_policy = cli_module.write_tool_policy
+    cli_module.OrchestratorClient = FakeClient
+    cli_module.write_tool_policy = fail_write_tool_policy
+    try:
+        result = CliRunner().invoke(
+            app,
+            [
+                "local-heavy-reclaim",
+                "--orchestrator-url",
+                "https://sds.alobar.net",
+                "--credential-key-id",
+                "factory-runner-github",
+                "--work-unit-id",
+                "unit-1",
+                "--current-repository",
+                "AlobarQuest/orchestrator",
+                "--workspace-dir",
+                str(tmp_path),
+                "--next-owner-id",
+                "factory-runner",
+                "--idempotency-key",
+                "local-heavy:unit-1:reclaim",
+            ],
+            env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+        )
+    finally:
+        cli_module.OrchestratorClient = original_client
+        cli_module.write_tool_policy = original_write_tool_policy
+
+    assert result.exit_code == 1
+    assert result.stderr == "authority does not allow orchestrator claim\n"
+    assert len(result.stderr) < 200
+    assert calls == [
+        (
+            "init",
+            ("https://sds.alobar.net", "factory-runner-github", "redacted-token"),
+        ),
+        ("brief", "unit-1"),
+    ]
+    assert not (tmp_path / "tool-policy").exists()
+
+
 def test_local_heavy_finalize_submits_evidence_without_leaking_lease(tmp_path: Path) -> None:
     brief = _runner_brief()
     (tmp_path / "brief.json").write_text(brief.model_dump_json())
@@ -816,8 +1381,8 @@ def test_local_heavy_finalize_submits_evidence_without_leaking_lease(tmp_path: P
                 "package_revision_id": "rev-1",
                 "runtime": "local-heavy",
                 "submit_expected_version": 5,
-                "verification_commands": ["make check"],
                 "work_unit_id": "unit-1",
+                **_finalization_authority(tmp_path, brief),
             }
         )
     )
@@ -826,6 +1391,9 @@ def test_local_heavy_finalize_submits_evidence_without_leaking_lease(tmp_path: P
     class FakeClient:
         def __init__(self, *, base_url: str, credential_key_id: str, token: str) -> None:
             calls.append(("init", (base_url, credential_key_id, token)))
+
+        def get_runner_brief(self, _unit_id: str) -> RunnerBrief:
+            return brief
 
         def list_evidence(self, unit_id: str) -> list[dict[str, object]]:
             calls.append(("list_evidence", unit_id))
@@ -908,8 +1476,8 @@ def test_commit_carries_an_explicit_git_identity(tmp_path: Path) -> None:
                 "lease_token": "lease-redacted",
                 "package_revision_id": "rev-1",
                 "submit_expected_version": 5,
-                "verification_commands": ["make check"],
                 "work_unit_id": "unit-1",
+                **_finalization_authority(tmp_path, brief),
             }
         )
     )
@@ -917,6 +1485,9 @@ def test_commit_carries_an_explicit_git_identity(tmp_path: Path) -> None:
 
     class FakeClient:
         def __init__(self, **_: object) -> None: ...
+
+        def get_runner_brief(self, _unit_id: str) -> RunnerBrief:
+            return brief
 
         def list_evidence(self, unit_id: str) -> list[dict[str, object]]:
             return []
@@ -1028,15 +1599,18 @@ def _finalize_with_clean_tree(tmp_path: Path, *, base_sha: str | None, head_sha:
         "lease_token": "lease-redacted",
         "package_revision_id": "rev-1",
         "submit_expected_version": 5,
-        "verification_commands": ["make check"],
         "work_unit_id": "unit-1",
     }
+    run.update(_finalization_authority(tmp_path, brief))
     if base_sha is not None:
         run["base_sha"] = base_sha
     (tmp_path / "run.json").write_text(json.dumps(run))
 
     class FakeClient:
         def __init__(self, **_kwargs: object) -> None: ...
+
+        def get_runner_brief(self, _unit_id: str) -> RunnerBrief:
+            return brief
 
     def fake_run(command: list[str], **_kwargs: object) -> str:
         if command[:3] == ["git", "status", "--porcelain"]:
