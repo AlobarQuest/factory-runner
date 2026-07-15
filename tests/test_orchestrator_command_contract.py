@@ -19,7 +19,7 @@ from pathlib import Path
 from factory_runner.evidence import build_pr_opened_evidence, build_verification_evidence
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "orchestrator_command_contract.json"
-CONTRACT_SHA256 = "4394f6c3a51c42efd766408c17b808e35de0a1b062c1b51e39e1ba73d306a421"
+CONTRACT_SHA256 = "8efbb271ef09f6b1cba423e993af56cb0a762739fc06a160e63fb874bee45c3a"
 
 _COMMON = {
     "revision_id": "3f242a84-deaf-4cbd-bb66-1870235c6411",
@@ -64,6 +64,20 @@ def test_verification_evidence_satisfies_evidence_command() -> None:
     )
     required = set(_contract()["EvidenceCommand"]["required"])
     assert required <= set(payload), f"missing required fields: {sorted(required - set(payload))}"
+
+
+def test_pr_binding_client_parameters_cover_the_orchestrator_command() -> None:
+    import inspect
+
+    from factory_runner.client import OrchestratorClient
+
+    parameters = set(inspect.signature(OrchestratorClient.pr_binding).parameters) - {"self"}
+    command_fields = set(_contract()["PrBindingCommand"]["required"]) | set(
+        _contract()["PrBindingCommand"]["optional"]
+    )
+
+    expected_parameters = {"unit_id", "idempotency_key"} | (command_fields - {"expected_version"})
+    assert parameters == expected_parameters
 
 
 def test_absent_context_snapshot_is_null_not_the_string_none() -> None:

@@ -29,5 +29,17 @@
       "expected_version",
       "idempotency_key"
     ]
+  },
+  "PrBindingCommand": {
+    "optional": [
+      "attempt",
+      "lease_token"
+    ],
+    "required": [
+      "expected_version",
+      "head_sha",
+      "idempotency_key",
+      "pr_number"
+    ]
   }
 }

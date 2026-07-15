@@ -16,7 +16,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from factory_runner.authority import validate_authority
+from factory_runner.authority import SUPPORTED_CAPABILITIES, validate_authority
+from factory_runner.capability_vocabulary import CAPABILITY_VOCABULARY
 from factory_runner.models import AuthorityEnvelope
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "runner_authority_envelope.json"
@@ -34,6 +35,13 @@ def test_golden_envelope_is_unchanged() -> None:
     """A one-sided edit here means the orchestrator's copy has silently drifted."""
     canonical = json.dumps(golden_envelope(), sort_keys=True, separators=(",", ":"))
     assert hashlib.sha256(canonical.encode()).hexdigest() == CONTRACT_SHA256
+
+
+def test_shipped_vocabulary_matches_the_authority_envelope() -> None:
+    envelope_capabilities = sorted(golden_envelope()["capabilities"])
+
+    assert list(CAPABILITY_VOCABULARY["runner"]) == envelope_capabilities
+    assert SUPPORTED_CAPABILITIES == frozenset(envelope_capabilities)
 
 
 def test_runner_accepts_the_orchestrator_envelope() -> None:

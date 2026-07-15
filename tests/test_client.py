@@ -158,6 +158,43 @@ def test_client_fails_work_unit() -> None:
     }
 
 
+def test_client_records_pr_binding_with_exact_command_shape() -> None:
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["payload"] = json.loads(request.read())
+        return httpx.Response(200, json={"work_unit_id": "unit-1", "pr_number": 99})
+
+    client = OrchestratorClient(
+        base_url="https://sds.alobar.net",
+        credential_key_id="factory-runner-github",
+        token="redacted-token",
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.pr_binding(
+        "unit-1",
+        pr_number=99,
+        head_sha="abc123",
+        attempt=2,
+        lease_token="lease-redacted",
+        idempotency_key="factory-runner:unit-1:pr-binding:a2",
+    )
+
+    assert seen == {
+        "path": "/api/v1/work-units/unit-1/pr-binding",
+        "payload": {
+            "expected_version": 0,
+            "idempotency_key": "factory-runner:unit-1:pr-binding:a2",
+            "pr_number": 99,
+            "head_sha": "abc123",
+            "attempt": 2,
+            "lease_token": "lease-redacted",
+        },
+    }
+
+
 def test_client_failure_reason_is_type_bounded() -> None:
     assert (
         get_type_hints(OrchestratorClient.fail)["reason"]

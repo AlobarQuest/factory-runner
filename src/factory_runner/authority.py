@@ -1,17 +1,9 @@
 from typing import Any
 
+from factory_runner.capability_vocabulary import CAPABILITY_VOCABULARY
 from factory_runner.models import AuthorityEnvelope, RunnerPermissions
 
-SUPPORTED_CAPABILITIES = frozenset(
-    {
-        "repo.read",
-        "repo.edit",
-        "command.run",
-        "github.pr.create",
-        "orchestrator.claim",
-        "orchestrator.evidence.write",
-    }
-)
+SUPPORTED_CAPABILITIES = frozenset(CAPABILITY_VOCABULARY["runner"])
 SUPPORTED_LEVELS = frozenset({"allowed", "prohibited"})
 
 

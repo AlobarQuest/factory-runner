@@ -1,6 +1,7 @@
 import pytest
 
-from factory_runner.authority import AuthorityError, validate_authority
+from factory_runner.authority import SUPPORTED_CAPABILITIES, AuthorityError, validate_authority
+from factory_runner.capability_vocabulary import CAPABILITY_VOCABULARY
 from factory_runner.models import AuthorityEnvelope
 
 
@@ -24,6 +25,10 @@ def _envelope() -> AuthorityEnvelope:
             },
         }
     )
+
+
+def test_supported_capabilities_are_derived_from_shipped_vocabulary() -> None:
+    assert SUPPORTED_CAPABILITIES == frozenset(CAPABILITY_VOCABULARY["runner"])
 
 
 def test_maps_allowed_capabilities_to_minimal_tools() -> None:

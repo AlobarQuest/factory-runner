@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from factory_runner.cli import app
@@ -315,6 +316,73 @@ def test_prepare_run_claims_starts_and_writes_workspace(tmp_path: Path) -> None:
     assert calls[3][0] == "start"
 
 
+def test_prepare_run_refuses_missing_pr_authority_before_claim_or_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factory_runner.authority import AuthorityError
+
+    brief = _runner_brief()
+    brief.authority.envelope.capabilities["github.pr.create"] = "prohibited"
+    calls: list[str] = []
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None: ...
+
+        def get_runner_brief(self, _unit_id: str) -> RunnerBrief:
+            calls.append("brief")
+            return brief
+
+        def claim(self, _unit_id: str, **_kwargs: object) -> dict[str, object]:
+            calls.append("claim")
+            raise AssertionError("claim must not be called without PR authority")
+
+        def start(self, _unit_id: str, _payload: dict[str, object]) -> dict[str, object]:
+            calls.append("start")
+            raise AssertionError("start must not be called without PR authority")
+
+    from factory_runner import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "OrchestratorClient", FakeClient)
+    result = CliRunner().invoke(
+        app,
+        [
+            "prepare-run",
+            "--orchestrator-url",
+            "https://sds.alobar.net",
+            "--credential-key-id",
+            "factory-runner-github",
+            "--work-unit-id",
+            "unit-1",
+            "--current-repository",
+            "AlobarQuest/orchestrator",
+            "--workspace-dir",
+            str(tmp_path),
+        ],
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == "authority does not allow pull request creation\n"
+    assert calls == ["brief"]
+    assert not (tmp_path / "run.json").exists()
+
+    with pytest.raises(typer.Exit) as exc_info:
+        cli_module._prepare_claimed_workspace(
+            client=cast(OrchestratorClient, FakeClient()),
+            brief=brief,
+            work_unit_id="unit-1",
+            workspace_dir=str(tmp_path),
+            current_repository="AlobarQuest/orchestrator",
+            runtime="github-hosted",
+            prompt_title="Factory Runner Work Unit",
+            claim_idempotency_key="claim-key",
+            start_idempotency_key_prefix="start-key",
+        )
+
+    assert isinstance(exc_info.value.__cause__, AuthorityError)
+    assert calls == ["brief"]
+
+
 def test_prepare_run_emits_generated_settings_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -438,6 +506,9 @@ def test_finalize_replays_refreshed_commands_in_order_with_bash_argv(
         def list_evidence(self, _unit_id: str) -> list[dict[str, object]]:
             return []
 
+        def pr_binding(self, _unit_id: str, **_payload: object) -> dict[str, object]:
+            return {"pr_number": 99}
+
         def submit_evidence(self, _unit_id: str, _payload: dict[str, object]) -> dict[str, object]:
             return {"id": "evidence-1"}
 
@@ -450,6 +521,8 @@ def test_finalize_replays_refreshed_commands_in_order_with_bash_argv(
             return " M file.py\n"
         if command[:3] == ["gh", "pr", "create"]:
             return "https://github.com/AlobarQuest/orchestrator/pull/99\n"
+        if command[:3] == ["gh", "pr", "view"]:
+            return "99\n"
         return "head\n" if command[:3] == ["git", "rev-parse", "HEAD"] else ""
 
     from factory_runner import cli as cli_module
@@ -633,6 +706,10 @@ def test_finalize_run_commits_pr_evidence_and_submits(
             calls.append(("list_evidence", unit_id))
             return []
 
+        def pr_binding(self, unit_id: str, **payload: object) -> dict[str, object]:
+            calls.append(("pr_binding", (unit_id, payload)))
+            return {"work_unit_id": unit_id, "pr_number": payload["pr_number"]}
+
         def submit_evidence(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
             calls.append(("evidence", (unit_id, payload)))
             return {"id": f"evidence-{len(calls)}"}
@@ -650,6 +727,8 @@ def test_finalize_run_commits_pr_evidence_and_submits(
             return "abc123\n"
         if command[:3] == ["gh", "pr", "create"]:
             return "https://github.com/AlobarQuest/orchestrator/pull/99\n"
+        if command[:3] == ["gh", "pr", "view"]:
+            return "99\n"
         return ""
 
     from factory_runner import cli as cli_module
@@ -711,7 +790,45 @@ def test_finalize_run_commits_pr_evidence_and_submits(
     # No prior evidence (list_evidence -> []), so this is a first-write, not a supersede.
     assert evidence_payload["supersede"] is False
     assert any(name == "list_evidence" for name, _ in calls)
+    binding_calls = [item for name, item in calls if name == "pr_binding"]
+    assert binding_calls == [
+        (
+            "unit-1",
+            {
+                "pr_number": 99,
+                "head_sha": "abc123",
+                "attempt": 1,
+                "lease_token": "lease-redacted",
+                "idempotency_key": "factory-runner:unit-1:pr-binding:a1",
+            },
+        )
+    ]
+    assert [name for name, _ in calls].index("pr_binding") < [name for name, _ in calls].index(
+        "evidence"
+    )
+    assert [name for name, _ in calls].index("pr_binding") < [name for name, _ in calls].index(
+        "submit"
+    )
+    assert [
+        "gh",
+        "pr",
+        "view",
+        "https://github.com/AlobarQuest/orchestrator/pull/99",
+        "--json",
+        "number",
+        "--jq",
+        ".number",
+    ] in run_commands
     assert calls[-1][0] == "submit"
+
+
+def test_pr_number_rejects_non_positive_gh_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    from factory_runner import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "_run_command", lambda _command: "0\n")
+
+    with pytest.raises(RuntimeError, match="invalid pull request number"):
+        cli_module._pr_number("https://github.com/AlobarQuest/orchestrator/pull/not-an-integer")
 
 
 @pytest.mark.parametrize(
@@ -839,6 +956,9 @@ def test_finalize_run_supersedes_when_prior_evidence_exists(tmp_path: Path) -> N
             # A row from a prior attempt, same AC.
             return [{"id": "prior", "ac_id": ac_id, "evidence_type": "runner.pr.opened"}]
 
+        def pr_binding(self, _unit_id: str, **_payload: object) -> dict[str, object]:
+            return {"pr_number": 100}
+
         def submit_evidence(self, unit_id: str, payload: dict[str, Any]) -> dict[str, object]:
             submitted.update(payload)
             return {"id": "evidence-2"}
@@ -853,6 +973,8 @@ def test_finalize_run_supersedes_when_prior_evidence_exists(tmp_path: Path) -> N
             return "def456\n"
         if command[:3] == ["gh", "pr", "create"]:
             return "https://github.com/AlobarQuest/orchestrator/pull/100\n"
+        if command[:3] == ["gh", "pr", "view"]:
+            return "100\n"
         return ""
 
     from factory_runner import cli as cli_module
@@ -1399,6 +1521,10 @@ def test_local_heavy_finalize_submits_evidence_without_leaking_lease(tmp_path: P
             calls.append(("list_evidence", unit_id))
             return []
 
+        def pr_binding(self, unit_id: str, **payload: object) -> dict[str, object]:
+            calls.append(("pr_binding", (unit_id, payload)))
+            return {"pr_number": payload["pr_number"]}
+
         def submit_evidence(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
             calls.append(("evidence", (unit_id, payload)))
             return {"id": f"evidence-{len(calls)}"}
@@ -1416,6 +1542,8 @@ def test_local_heavy_finalize_submits_evidence_without_leaking_lease(tmp_path: P
         if command[:3] == ["gh", "pr", "create"]:
             assert "lease-redacted" not in command
             return "https://github.com/AlobarQuest/orchestrator/pull/99\n"
+        if command[:3] == ["gh", "pr", "view"]:
+            return "99\n"
         return ""
 
     from factory_runner import cli as cli_module
@@ -1456,6 +1584,10 @@ def test_local_heavy_finalize_submits_evidence_without_leaking_lease(tmp_path: P
     assert evidence_payloads
     assert all(
         "lease-redacted" not in json.dumps(payload["payload"]) for payload in evidence_payloads
+    )
+    call_names = [name for name, _ in calls]
+    assert (
+        call_names.index("pr_binding") < call_names.index("evidence") < call_names.index("submit")
     )
 
 
