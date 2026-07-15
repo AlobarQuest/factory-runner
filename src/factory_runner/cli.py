@@ -11,7 +11,7 @@ from typing import Annotated, Any
 
 import typer
 
-from factory_runner.authority import validate_authority
+from factory_runner.authority import AuthorityError, validate_authority
 from factory_runner.client import FailureReason, OrchestratorClient
 from factory_runner.coding_result import (
     CodingResultError,
@@ -273,6 +273,19 @@ def _optional_str(value: object) -> str | None:
     return text or None
 
 
+def _pr_number(pr_url: str) -> int:
+    value = _run_command(
+        ["gh", "pr", "view", pr_url, "--json", "number", "--jq", ".number"]
+    ).strip()
+    try:
+        pr_number = int(value)
+    except ValueError as error:
+        raise RuntimeError("gh pr view returned an invalid pull request number") from error
+    if pr_number <= 0:
+        raise RuntimeError("gh pr view returned an invalid pull request number")
+    return pr_number
+
+
 def _commit_message(brief: RunnerBrief, attempt: int) -> str:
     return (
         f"feat: implement SDS unit {brief.work_unit.id}\n\n"
@@ -321,6 +334,10 @@ def _prepare_claimed_workspace(
     if brief.readiness.status != "ready":
         typer.echo("work unit is not ready", err=True)
         raise typer.Exit(code=1)
+    if not permissions.can_create_pr:
+        error = AuthorityError("authority does not allow pull request creation")
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=1) from error
     if not permissions.can_claim:
         typer.echo("authority does not allow orchestrator claim", err=True)
         raise typer.Exit(code=1)
@@ -690,6 +707,16 @@ def _finalize_workspace(
             _pr_body(brief, verification_summaries, []),
         ]
     ).strip()
+    pr_number = _pr_number(pr_url)
+
+    client.pr_binding(
+        work_unit_id,
+        pr_number=pr_number,
+        head_sha=head_sha,
+        attempt=attempt,
+        lease_token=str(run["lease_token"]),
+        idempotency_key=f"factory-runner:{work_unit_id}:pr-binding:a{attempt}",
+    )
 
     ac_id = _first_ac_id(brief)
     expected_version = int(run["submit_expected_version"])

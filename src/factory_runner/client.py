@@ -169,6 +169,30 @@ class OrchestratorClient:
         response = self._request("POST", f"/api/v1/work-units/{unit_id}/evidence", json=payload)
         return response.json()
 
+    def pr_binding(
+        self,
+        unit_id: str,
+        *,
+        pr_number: int,
+        head_sha: str,
+        attempt: int,
+        lease_token: str,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        response = self._request(
+            "POST",
+            f"/api/v1/work-units/{unit_id}/pr-binding",
+            json={
+                "expected_version": 0,
+                "idempotency_key": idempotency_key,
+                "pr_number": pr_number,
+                "head_sha": head_sha,
+                "attempt": attempt,
+                "lease_token": lease_token,
+            },
+        )
+        return response.json()
+
     def list_evidence(self, unit_id: str) -> list[dict[str, Any]]:
         response = self._request("GET", f"/api/v1/work-units/{unit_id}/evidence")
         return response.json()
