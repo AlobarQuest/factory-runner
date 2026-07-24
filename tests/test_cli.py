@@ -512,6 +512,9 @@ def test_finalize_replays_refreshed_commands_in_order_with_bash_argv(
         def submit_evidence(self, _unit_id: str, _payload: dict[str, object]) -> dict[str, object]:
             return {"id": "evidence-1"}
 
+        def cost_actuals(self, _unit_id: str, **_payload: object) -> dict[str, object]:
+            return {}
+
         def submit(self, _unit_id: str, _payload: dict[str, object]) -> dict[str, object]:
             return {"version": 6}
 
@@ -713,6 +716,10 @@ def test_finalize_run_commits_pr_evidence_and_submits(
         def submit_evidence(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
             calls.append(("evidence", (unit_id, payload)))
             return {"id": f"evidence-{len(calls)}"}
+
+        def cost_actuals(self, unit_id: str, **payload: object) -> dict[str, object]:
+            calls.append(("cost_actuals", (unit_id, payload)))
+            return {}
 
         def submit(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
             calls.append(("submit", (unit_id, payload)))
@@ -963,6 +970,9 @@ def test_finalize_run_supersedes_when_prior_evidence_exists(tmp_path: Path) -> N
             submitted.update(payload)
             return {"id": "evidence-2"}
 
+        def cost_actuals(self, unit_id: str, **_payload: object) -> dict[str, object]:
+            return {}
+
         def submit(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
             return {"unit_id": unit_id, "state": "submitted", "version": 10}
 
@@ -1023,6 +1033,9 @@ def test_fail_run_reports_bounded_failure_from_workspace(
 
     class FakeClient:
         def __init__(self, **_kwargs: object) -> None: ...
+
+        def cost_actuals(self, unit_id: str, **_payload: object) -> dict[str, object]:
+            return {}
 
         def fail(self, unit_id: str, **payload: object) -> dict[str, object]:
             calls.append({"unit_id": unit_id, **payload})
@@ -1529,6 +1542,10 @@ def test_local_heavy_finalize_submits_evidence_without_leaking_lease(tmp_path: P
             calls.append(("evidence", (unit_id, payload)))
             return {"id": f"evidence-{len(calls)}"}
 
+        def cost_actuals(self, unit_id: str, **payload: object) -> dict[str, object]:
+            calls.append(("cost_actuals", (unit_id, payload)))
+            return {}
+
         def submit(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
             calls.append(("submit", (unit_id, payload)))
             return {"unit_id": unit_id, "state": "submitted", "version": 6}
@@ -1626,6 +1643,9 @@ def test_commit_carries_an_explicit_git_identity(tmp_path: Path) -> None:
 
         def submit_evidence(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
             return {"id": "evidence-1"}
+
+        def cost_actuals(self, unit_id: str, **_payload: object) -> dict[str, object]:
+            return {}
 
         def submit(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
             return {"unit_id": unit_id, "state": "submitted", "version": 6}

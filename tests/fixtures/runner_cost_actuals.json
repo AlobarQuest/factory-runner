@@ -1,0 +1,12 @@
+{
+  "idempotency_key": "factory-runner:11111111-1111-1111-1111-111111111111:cost:a2",
+  "expected_version": 0,
+  "attempt": 2,
+  "lease_token": "lease-token-example",
+  "cost_known": true,
+  "llm_calls": 37,
+  "num_turns": 12,
+  "input_tokens": 812004,
+  "output_tokens": 41220,
+  "cost_usd": 9.14
+}

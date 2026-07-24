@@ -115,7 +115,8 @@ jobs:
             --orchestrator-url "$ORCHESTRATOR_URL" \
             --credential-key-id "$FACTORY_RUNNER_CREDENTIAL_KEY_ID" \
             --work-unit-id "$WORK_UNIT_ID" \
-            --workspace-dir "$RUNNER_TEMP/factory-runner"
+            --workspace-dir "$RUNNER_TEMP/factory-runner" \
+            --execution-file "${{ steps.coding.outputs.execution_file }}"
 
       - name: Report failed scoped run
         id: report_failure
@@ -137,4 +138,5 @@ jobs:
             --credential-key-id "$FACTORY_RUNNER_CREDENTIAL_KEY_ID" \
             --work-unit-id "$WORK_UNIT_ID" \
             --workspace-dir "$RUNNER_TEMP/factory-runner" \
-            --reason "$reason"
+            --reason "$reason" \
+            --execution-file "${{ steps.coding.outputs.execution_file }}"

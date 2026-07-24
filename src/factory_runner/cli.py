@@ -12,10 +12,12 @@ from typing import Annotated, Any
 import typer
 
 from factory_runner.authority import AuthorityError, validate_authority
-from factory_runner.client import FailureReason, OrchestratorClient
+from factory_runner.client import FailureReason, OrchestratorClient, OrchestratorError
 from factory_runner.coding_result import (
     CodingResultError,
+    CostActuals,
     classify_execution_file,
+    extract_cost_actuals,
     verify_install_revision,
 )
 from factory_runner.command_policy import (
@@ -603,6 +605,50 @@ def local_heavy_reclaim(
     typer.echo(f"reclaimed local-heavy lease for {work_unit_id} attempt {attempt}")
 
 
+_UNKNOWN_COST_ACTUALS = CostActuals(
+    cost_known=False,
+    llm_calls=None,
+    num_turns=None,
+    input_tokens=None,
+    output_tokens=None,
+    cost_usd=None,
+)
+
+
+def _emit_cost_actuals(
+    client: OrchestratorClient,
+    work_unit_id: str,
+    attempt: int,
+    lease_token: str,
+    execution_file: str | None,
+) -> None:
+    """Report best-effort usage actuals to the orchestrator before a terminal transition.
+
+    Must run while the claim/lease is still live -- the cost-actuals route is claim-gated,
+    so calling this after `submit`/`fail` releases the lease would be rejected.
+    """
+    actuals = (
+        extract_cost_actuals(Path(execution_file)) if execution_file else _UNKNOWN_COST_ACTUALS
+    )
+    try:
+        client.cost_actuals(
+            work_unit_id,
+            attempt=attempt,
+            lease_token=lease_token,
+            cost_known=actuals.cost_known,
+            llm_calls=actuals.llm_calls,
+            num_turns=actuals.num_turns,
+            input_tokens=actuals.input_tokens,
+            output_tokens=actuals.output_tokens,
+            cost_usd=actuals.cost_usd,
+            idempotency_key=f"factory-runner:{work_unit_id}:cost:a{attempt}",
+        )
+    except OrchestratorError as error:
+        # Cost actuals is best-effort telemetry, not a delivery gate: a missing route or a
+        # transient 5xx here must never stop the terminal submit/fail transition that follows.
+        typer.echo(f"cost-actuals emit skipped: {error}", err=True)
+
+
 def _finalize_workspace(
     *,
     orchestrator_url: str,
@@ -610,6 +656,7 @@ def _finalize_workspace(
     work_unit_id: str,
     workspace_dir: str,
     success_prefix: str,
+    execution_file: str | None = None,
 ) -> None:
     client = _client(orchestrator_url, credential_key_id)
     brief, run = _load_workspace(workspace_dir)
@@ -751,6 +798,7 @@ def _finalize_workspace(
     )
     evidence_refs.append(str(pr_evidence.get("id", pr_url)))
 
+    _emit_cost_actuals(client, work_unit_id, attempt, str(run["lease_token"]), execution_file)
     client.submit(
         work_unit_id,
         {
@@ -845,6 +893,7 @@ def finalize_run(
     credential_key_id: Annotated[str, typer.Option()],
     work_unit_id: Annotated[str, typer.Option()],
     workspace_dir: Annotated[str, typer.Option()] = ".factory-runner",
+    execution_file: Annotated[str | None, typer.Option()] = None,
 ) -> None:
     _finalize_workspace(
         orchestrator_url=orchestrator_url,
@@ -852,6 +901,7 @@ def finalize_run(
         work_unit_id=work_unit_id,
         workspace_dir=workspace_dir,
         success_prefix="submitted work unit",
+        execution_file=execution_file,
     )
 
 
@@ -862,6 +912,7 @@ def fail_run(
     work_unit_id: Annotated[str, typer.Option()],
     reason: Annotated[FailureReason, typer.Option()],
     workspace_dir: Annotated[str, typer.Option()] = ".factory-runner",
+    execution_file: Annotated[str | None, typer.Option()] = None,
 ) -> None:
     run_path = _workspace_path(workspace_dir) / "run.json"
     if not run_path.is_file():
@@ -874,6 +925,7 @@ def fail_run(
 
     attempt = int(run["attempt"])
     client = _client(orchestrator_url, credential_key_id)
+    _emit_cost_actuals(client, work_unit_id, attempt, str(run["lease_token"]), execution_file)
     client.fail(
         work_unit_id,
         expected_version=int(run["submit_expected_version"]),
