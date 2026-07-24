@@ -12,7 +12,7 @@ from typing import Annotated, Any
 import typer
 
 from factory_runner.authority import AuthorityError, validate_authority
-from factory_runner.client import FailureReason, OrchestratorClient
+from factory_runner.client import FailureReason, OrchestratorClient, OrchestratorError
 from factory_runner.coding_result import (
     CodingResultError,
     CostActuals,
@@ -630,18 +630,23 @@ def _emit_cost_actuals(
     actuals = (
         extract_cost_actuals(Path(execution_file)) if execution_file else _UNKNOWN_COST_ACTUALS
     )
-    client.cost_actuals(
-        work_unit_id,
-        attempt=attempt,
-        lease_token=lease_token,
-        cost_known=actuals.cost_known,
-        llm_calls=actuals.llm_calls,
-        num_turns=actuals.num_turns,
-        input_tokens=actuals.input_tokens,
-        output_tokens=actuals.output_tokens,
-        cost_usd=actuals.cost_usd,
-        idempotency_key=f"factory-runner:{work_unit_id}:cost:a{attempt}",
-    )
+    try:
+        client.cost_actuals(
+            work_unit_id,
+            attempt=attempt,
+            lease_token=lease_token,
+            cost_known=actuals.cost_known,
+            llm_calls=actuals.llm_calls,
+            num_turns=actuals.num_turns,
+            input_tokens=actuals.input_tokens,
+            output_tokens=actuals.output_tokens,
+            cost_usd=actuals.cost_usd,
+            idempotency_key=f"factory-runner:{work_unit_id}:cost:a{attempt}",
+        )
+    except OrchestratorError as error:
+        # Cost actuals is best-effort telemetry, not a delivery gate: a missing route or a
+        # transient 5xx here must never stop the terminal submit/fail transition that follows.
+        typer.echo(f"cost-actuals emit skipped: {error}", err=True)
 
 
 def _finalize_workspace(

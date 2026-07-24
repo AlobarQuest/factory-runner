@@ -14,6 +14,7 @@ from test_cli import _finalization_authority, _runner_brief
 from typer.testing import CliRunner
 
 from factory_runner.cli import app
+from factory_runner.client import OrchestratorError
 from factory_runner.models import RunnerBrief
 
 
@@ -348,3 +349,117 @@ def test_fail_run_emits_unknown_cost_without_execution_file(
     assert cost_call["cost_known"] is False
     assert cost_call["llm_calls"] is None
     assert cost_call["cost_usd"] is None
+
+
+def test_finalize_run_continues_when_cost_actuals_emit_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cost-actuals is non-essential telemetry. If the orchestrator route is missing or
+    5xxs, `_emit_cost_actuals` must swallow the client's error and let `submit` still run
+    -- never stall a unit that otherwise completed successfully."""
+    brief = _runner_brief()
+    _write_finalize_workspace(tmp_path, brief)
+    execution_file = _write_execution_transcript(tmp_path)
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class _FailingCostClient(_RecordingClient):
+        def cost_actuals(self, unit_id: str, **payload: object) -> dict[str, object]:
+            self._calls.append(("cost_actuals", {"unit_id": unit_id, **payload}))
+            raise OrchestratorError("cost-actuals route not found (404)")
+
+    def make_client_class(brief: RunnerBrief, calls: list[tuple[str, dict[str, object]]]) -> type:
+        class Client(_FailingCostClient):
+            def __init__(self, **kwargs: object) -> None:
+                super().__init__(calls, **kwargs)
+                self._brief = brief
+
+        return Client
+
+    from factory_runner import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "OrchestratorClient", make_client_class(brief, calls))
+    monkeypatch.setattr(cli_module, "_run_command", _fake_run_for_finalize)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "finalize-run",
+            "--orchestrator-url",
+            "https://sds.alobar.net",
+            "--credential-key-id",
+            "factory-runner-github",
+            "--work-unit-id",
+            "unit-1",
+            "--workspace-dir",
+            str(tmp_path),
+            "--execution-file",
+            str(execution_file),
+        ],
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+    )
+
+    assert result.exit_code == 0, result.output
+    names = [name for name, _ in calls]
+    assert names.count("cost_actuals") == 1
+    assert names.count("submit") == 1
+    assert names.index("cost_actuals") < names.index("submit")
+
+
+def test_fail_run_continues_when_cost_actuals_emit_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Symmetric failure-path coverage: a broken cost-actuals emit must not block `fail`
+    either."""
+    (tmp_path / "run.json").write_text(
+        json.dumps(
+            {
+                "attempt": 2,
+                "lease_token": "lease-redacted",
+                "submit_expected_version": 5,
+                "work_unit_id": "unit-1",
+            }
+        )
+    )
+    execution_file = _write_execution_transcript(tmp_path)
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None: ...
+
+        def cost_actuals(self, unit_id: str, **payload: object) -> dict[str, object]:
+            calls.append(("cost_actuals", {"unit_id": unit_id, **payload}))
+            raise OrchestratorError("cost-actuals route not found (404)")
+
+        def fail(self, unit_id: str, **payload: object) -> dict[str, object]:
+            calls.append(("fail", {"unit_id": unit_id, **payload}))
+            return {"unit_id": unit_id, "state": "failed", "version": 6}
+
+    from factory_runner import cli as cli_module
+
+    monkeypatch.setattr(cli_module, "OrchestratorClient", FakeClient)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "fail-run",
+            "--orchestrator-url",
+            "https://sds.alobar.net",
+            "--credential-key-id",
+            "factory-runner-github",
+            "--work-unit-id",
+            "unit-1",
+            "--workspace-dir",
+            str(tmp_path),
+            "--reason",
+            "coding_action_failed",
+            "--execution-file",
+            str(execution_file),
+        ],
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+    )
+
+    assert result.exit_code == 0, result.output
+    names = [name for name, _ in calls]
+    assert names.count("cost_actuals") == 1
+    assert names.count("fail") == 1
+    assert names.index("cost_actuals") < names.index("fail")
