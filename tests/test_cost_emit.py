@@ -10,11 +10,11 @@ import json
 from pathlib import Path
 
 import pytest
+from test_cli import _finalization_authority, _runner_brief
 from typer.testing import CliRunner
 
 from factory_runner.cli import app
 from factory_runner.models import RunnerBrief
-from tests.test_cli import _finalization_authority, _runner_brief
 
 
 def _write_execution_transcript(tmp_path: Path) -> Path:
