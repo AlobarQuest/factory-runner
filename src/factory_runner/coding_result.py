@@ -64,6 +64,61 @@ def classify_execution_file(path: Path) -> CodingResult:
     return CodingResult(subtype=subtype, is_error=is_error)
 
 
+@dataclass(frozen=True)
+class CostActuals:
+    cost_known: bool
+    llm_calls: int | None
+    num_turns: int | None
+    input_tokens: int | None
+    output_tokens: int | None
+    cost_usd: float | None
+
+
+_UNKNOWN_COST = CostActuals(
+    cost_known=False,
+    llm_calls=None,
+    num_turns=None,
+    input_tokens=None,
+    output_tokens=None,
+    cost_usd=None,
+)
+
+
+def extract_cost_actuals(path: Path) -> CostActuals:
+    """Best-effort usage from the terminal result record; unknown when no usable transcript.
+
+    llm_calls is the count of assistant records (true model calls), NOT num_turns (agentic
+    turns) -- the declared budget field is max_llm_calls, so the actual must be a faithful call
+    count. A missing/partial transcript yields cost_known=False rather than a fabricated zero.
+    """
+    try:
+        records = _execution_records(path)
+    except CodingResultError:
+        return _UNKNOWN_COST
+    results = [r for r in records if r.get("type") == "result"]
+    if len(results) != 1 or results[0] is not records[-1]:
+        return _UNKNOWN_COST
+    result = results[0]
+    usage = result.get("usage")
+    cost_usd = result.get("total_cost_usd")
+    if not isinstance(usage, dict) or not isinstance(cost_usd, (int, float)):
+        return _UNKNOWN_COST
+    input_tokens = usage.get("input_tokens")
+    output_tokens = usage.get("output_tokens")
+    num_turns = result.get("num_turns")
+    if not all(isinstance(v, int) for v in (input_tokens, output_tokens, num_turns)):
+        return _UNKNOWN_COST
+    llm_calls = sum(1 for r in records if r.get("type") == "assistant")
+    return CostActuals(
+        cost_known=True,
+        llm_calls=llm_calls,
+        num_turns=num_turns,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=float(cost_usd),
+    )
+
+
 def verify_install_revision(expected: str) -> None:
     """Verify the installed package was built from the requested immutable VCS revision."""
     if re.fullmatch(r"[0-9a-f]{40}", expected) is None:
