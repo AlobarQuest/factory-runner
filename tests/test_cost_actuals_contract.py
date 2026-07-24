@@ -19,3 +19,18 @@ def golden_cost_actuals() -> dict:
 def test_golden_cost_actuals_is_unchanged() -> None:
     canonical = json.dumps(golden_cost_actuals(), sort_keys=True, separators=(",", ":"))
     assert hashlib.sha256(canonical.encode()).hexdigest() == COST_ACTUALS_CONTRACT_SHA256
+
+
+def test_cost_actuals_client_parameters_cover_the_contract() -> None:
+    import inspect
+
+    from factory_runner.client import OrchestratorClient
+
+    # expected_version is hardcoded by the client (like pr_binding), never a caller-supplied
+    # parameter -- exclude it from the expected parameter set.
+    body_fields = set(golden_cost_actuals().keys())
+    expected_parameters = {"unit_id"} | (body_fields - {"expected_version"})
+    assert (
+        set(inspect.signature(OrchestratorClient.cost_actuals).parameters) - {"self"}
+        == expected_parameters
+    )

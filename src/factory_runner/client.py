@@ -193,6 +193,38 @@ class OrchestratorClient:
         )
         return response.json()
 
+    def cost_actuals(
+        self,
+        unit_id: str,
+        *,
+        attempt: int,
+        lease_token: str,
+        cost_known: bool,
+        llm_calls: int | None,
+        num_turns: int | None,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cost_usd: float | None,
+        idempotency_key: str,
+    ) -> dict[str, Any]:
+        response = self._request(
+            "POST",
+            f"/api/v1/work-units/{unit_id}/cost-actuals",
+            json={
+                "expected_version": 0,
+                "idempotency_key": idempotency_key,
+                "attempt": attempt,
+                "lease_token": lease_token,
+                "cost_known": cost_known,
+                "llm_calls": llm_calls,
+                "num_turns": num_turns,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cost_usd": cost_usd,
+            },
+        )
+        return response.json()
+
     def list_evidence(self, unit_id: str) -> list[dict[str, Any]]:
         response = self._request("GET", f"/api/v1/work-units/{unit_id}/evidence")
         return response.json()
