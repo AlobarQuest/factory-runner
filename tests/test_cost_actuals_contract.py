@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "runner_cost_actuals.json"
-COST_ACTUALS_CONTRACT_SHA256 = "1338e794272f983f3d0a4f82e36f6368b11a516b2a66b92d8bea9169fed02fac"
+COST_ACTUALS_CONTRACT_SHA256 = "87004ad49dfbca020004d6c5ffa7dec2ce55923bbb0388604cc0bebde6f4386a"
 
 
 def golden_cost_actuals() -> dict:
