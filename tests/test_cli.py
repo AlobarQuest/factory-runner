@@ -509,6 +509,9 @@ def test_finalize_replays_refreshed_commands_in_order_with_bash_argv(
         def pr_binding(self, _unit_id: str, **_payload: object) -> dict[str, object]:
             return {"pr_number": 99}
 
+        def get_evidence_pack_markdown(self, _unit_id: str) -> str:
+            return "# Evidence Pack\n"
+
         def submit_evidence(self, _unit_id: str, _payload: dict[str, object]) -> dict[str, object]:
             return {"id": "evidence-1"}
 
@@ -712,6 +715,10 @@ def test_finalize_run_commits_pr_evidence_and_submits(
         def pr_binding(self, unit_id: str, **payload: object) -> dict[str, object]:
             calls.append(("pr_binding", (unit_id, payload)))
             return {"work_unit_id": unit_id, "pr_number": payload["pr_number"]}
+
+        def get_evidence_pack_markdown(self, unit_id: str) -> str:
+            calls.append(("get_evidence_pack_markdown", unit_id))
+            return "# Evidence Pack\n"
 
         def submit_evidence(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
             calls.append(("evidence", (unit_id, payload)))
@@ -965,6 +972,9 @@ def test_finalize_run_supersedes_when_prior_evidence_exists(tmp_path: Path) -> N
 
         def pr_binding(self, _unit_id: str, **_payload: object) -> dict[str, object]:
             return {"pr_number": 100}
+
+        def get_evidence_pack_markdown(self, _unit_id: str) -> str:
+            return "# Evidence Pack\n"
 
         def submit_evidence(self, unit_id: str, payload: dict[str, Any]) -> dict[str, object]:
             submitted.update(payload)
@@ -1537,6 +1547,10 @@ def test_local_heavy_finalize_submits_evidence_without_leaking_lease(tmp_path: P
         def pr_binding(self, unit_id: str, **payload: object) -> dict[str, object]:
             calls.append(("pr_binding", (unit_id, payload)))
             return {"pr_number": payload["pr_number"]}
+
+        def get_evidence_pack_markdown(self, unit_id: str) -> str:
+            calls.append(("get_evidence_pack_markdown", unit_id))
+            return "# Evidence Pack\n"
 
         def submit_evidence(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
             calls.append(("evidence", (unit_id, payload)))

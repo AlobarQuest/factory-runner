@@ -87,6 +87,10 @@ class _RecordingClient:
         self._calls.append(("pr_binding", {"unit_id": unit_id, **payload}))
         return {"pr_number": payload["pr_number"]}
 
+    def get_evidence_pack_markdown(self, unit_id: str) -> str:
+        self._calls.append(("get_evidence_pack_markdown", {"unit_id": unit_id}))
+        return "# Evidence Pack\n"
+
     def submit_evidence(self, unit_id: str, payload: dict[str, object]) -> dict[str, object]:
         self._calls.append(("submit_evidence", {"unit_id": unit_id, "payload": payload}))
         return {"id": "evidence-1"}

@@ -68,6 +68,10 @@ class OrchestratorClient:
         response = self._request("GET", f"/api/v1/work-units/{unit_id}/runner-brief")
         return RunnerBrief.model_validate(response.json())
 
+    def get_evidence_pack_markdown(self, unit_id: str) -> str:
+        response = self._request("GET", f"/api/v1/work-units/{unit_id}/evidence-pack/markdown")
+        return response.text
+
     def claim(
         self,
         unit_id: str,

@@ -288,6 +288,66 @@ def _pr_number(pr_url: str) -> int:
     return pr_number
 
 
+def _find_marker_comment_id(pr_number: int, marker: str) -> int | None:
+    """Find the id of the PR comment carrying our marker, if one already exists.
+
+    Uses the REST issue-comments listing (a PR is an issue for comment purposes) rather
+    than `gh pr view --json comments`, whose comment ids are GraphQL node ids, not the
+    integer ids the REST update endpoint below expects.
+    """
+    output = _run_command(
+        ["gh", "api", f"repos/{{owner}}/{{repo}}/issues/{pr_number}/comments", "--paginate"]
+    )
+    try:
+        comments = json.loads(output) if output.strip() else []
+    except json.JSONDecodeError:
+        return None
+    for comment in comments:
+        if isinstance(comment, dict) and marker in str(comment.get("body", "")):
+            comment_id = comment.get("id")
+            if isinstance(comment_id, int):
+                return comment_id
+    return None
+
+
+def _upsert_pr_comment(pr_url: str, marker: str, body: str) -> None:
+    """Create the marker comment, or edit it in place if it already exists.
+
+    Editing by marker (rather than `--edit-last`) is deliberate: the newest comment on
+    the PR may belong to a human who commented after a previous evidence-pack post, and
+    `--edit-last` would clobber it instead of our own comment.
+    """
+    pr_number = _pr_number(pr_url)
+    existing_comment_id = _find_marker_comment_id(pr_number, marker)
+    if existing_comment_id is not None:
+        _run_command(
+            [
+                "gh",
+                "api",
+                f"repos/{{owner}}/{{repo}}/issues/comments/{existing_comment_id}",
+                "-X",
+                "PATCH",
+                "--input",
+                "-",
+            ],
+            input=json.dumps({"body": body}),
+        )
+    else:
+        _run_command(["gh", "pr", "comment", pr_url, "--body", body])
+
+
+def _post_evidence_pack_comment(client: OrchestratorClient, work_unit_id: str, pr_url: str) -> None:
+    """Project the evidence pack onto the PR as a comment. Best-effort: a fetch or gh failure
+    logs and continues -- the pack is a readable projection, never a delivery gate."""
+    marker = f"<!-- sds-evidence-pack:{work_unit_id} -->"
+    try:
+        markdown = client.get_evidence_pack_markdown(work_unit_id)
+        body = f"{marker}\n{markdown}"
+        _upsert_pr_comment(pr_url, marker, body)
+    except (OrchestratorError, RuntimeError) as error:
+        typer.echo(f"evidence-pack comment skipped: {error}", err=True)
+
+
 def _commit_message(brief: RunnerBrief, attempt: int) -> str:
     return (
         f"feat: implement SDS unit {brief.work_unit.id}\n\n"
@@ -764,6 +824,7 @@ def _finalize_workspace(
         lease_token=str(run["lease_token"]),
         idempotency_key=f"factory-runner:{work_unit_id}:pr-binding:a{attempt}",
     )
+    _post_evidence_pack_comment(client, work_unit_id, pr_url)
 
     ac_id = _first_ac_id(brief)
     expected_version = int(run["submit_expected_version"])
