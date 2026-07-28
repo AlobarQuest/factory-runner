@@ -205,17 +205,38 @@ def _write_github_output(**values: str) -> None:
 # sweep the artifact into the pull request. `.git/info/exclude` is local to the
 # checkout and never committed, so this hides the artifact without touching the
 # repository's own .gitignore.
-_AGENT_ARTIFACTS = ("output.txt", ".factory-runner/")
+#
+# `.sds-local-heavy/` is here for a sharper reason than tidiness: its `run.json`
+# holds the live `lease_token`, so `git add -A` committed a credential into the
+# pull request on every local-heavy run. The fix belongs HERE and not in each
+# target repository's .gitignore -- that shape is a fix you have to remember N
+# times, and it had already been forgotten twice (`security-standards` and
+# `brain`, both live fan-out targets) before this landed.
+_AGENT_ARTIFACTS = ("output.txt", ".factory-runner/", ".sds-local-heavy/")
 
 
-def _exclude_agent_artifacts(repo_root: Path) -> None:
+def _exclude_agent_artifacts(repo_root: Path, *extra: str) -> None:
     exclude = Path(repo_root) / ".git" / "info" / "exclude"
     if not exclude.parent.is_dir():
         return
     existing = exclude.read_text() if exclude.exists() else ""
-    missing = [p for p in _AGENT_ARTIFACTS if p not in existing]
+    missing = [p for p in (*_AGENT_ARTIFACTS, *extra) if p and p not in existing]
     if missing:
         exclude.write_text(existing.rstrip("\n") + "\n" + "\n".join(missing) + "\n")
+
+
+def _workspace_exclude_entry(workspace: Path, checkout: Path) -> str:
+    """The `.git/info/exclude` entry for a workspace, or "" when it is outside the checkout.
+
+    `--workspace-dir` is configurable, so the literal `.sds-local-heavy/` in `_AGENT_ARTIFACTS`
+    covers only the default. A workspace outside the checkout needs no entry -- `git add -A`
+    cannot reach it.
+    """
+    try:
+        relative = workspace.resolve().relative_to(checkout.resolve())
+    except ValueError:
+        return ""
+    return f"{relative.as_posix()}/"
 
 
 _GIT_AUTHOR_NAME = "factory-runner"
@@ -579,11 +600,16 @@ def local_heavy_renew(
         raise typer.Exit(code=1)
     attempt = int(run["attempt"])
     renew_key = idempotency_key or f"local-heavy:{work_unit_id}:renew:a{attempt}:{uuid.uuid4()}"
+    # Renewing extends the lease; it performs no state transition, so it does not bump the unit
+    # version. `submit_expected_version` -- recorded from the `start` response that put the unit
+    # in EXECUTING -- is therefore the unit's current version for the whole EXECUTING window,
+    # and is the same value `finalize-run` and `fail-run` already send.
     result = client.renew(
         work_unit_id,
         attempt=attempt,
         lease_token=str(run["lease_token"]),
         idempotency_key=renew_key,
+        expected_version=int(run["submit_expected_version"]),
     )
     run["lease_expires_at"] = result.get("expires_at")
     _save_run(workspace_dir, run)
@@ -723,6 +749,14 @@ def _finalize_workspace(
     if brief.work_unit.id != work_unit_id or run.get("work_unit_id") != work_unit_id:
         typer.echo("workspace work unit mismatch", err=True)
         raise typer.Exit(code=1)
+
+    # Both lanes converge here, and here is the only place that matters: `prepare_run` excludes
+    # artifacts for the dispatched lane only, while the `git add -A` below sweeps BOTH. The
+    # local-heavy lane therefore reached this line with its workspace -- and the lease token in
+    # its run.json -- still visible to git.
+    _exclude_agent_artifacts(
+        Path.cwd(), _workspace_exclude_entry(_workspace_path(workspace_dir), Path.cwd())
+    )
 
     permissions = _refreshed_finalization_permissions(
         client=client,

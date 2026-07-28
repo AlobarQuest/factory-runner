@@ -98,8 +98,18 @@ class OrchestratorClient:
         attempt: int,
         lease_token: str,
         idempotency_key: str,
-        expected_version: int | None = None,
+        expected_version: int,
     ) -> dict[str, Any]:
+        """`expected_version` is REQUIRED, and its default is what made renew dead on arrival.
+
+        The orchestrator's `RenewCommand` inherits `expected_version: int = Field(ge=0)` from
+        `CommandBase` -- required, no default -- so posting `null` is a 422 every single time.
+        With the parameter defaulted to None here and never passed by the CLI, `local-heavy-renew`
+        had never once succeeded, and "claim at the evidence push" was inherited through handoffs
+        as a preference when it was only ever a workaround for a dead command. Keeping the
+        parameter required is what stops that recurring: an omission is now a TypeError at the
+        call site rather than a 422 at the far end of the wire.
+        """
         response = self._request(
             "POST",
             f"/api/v1/work-units/{unit_id}/renew",

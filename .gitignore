@@ -1,6 +1,7 @@
 .DS_Store
 .sds-local-heavy/
 .venv/
+build/
 *.env
 *.key
 *.password
