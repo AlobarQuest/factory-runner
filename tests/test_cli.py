@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Any, cast
 
+import httpx
 import pytest
 import typer
 from typer.testing import CliRunner
@@ -1343,10 +1344,98 @@ def test_local_heavy_renew_updates_workspace_without_printing_lease(tmp_path: Pa
     manifest = json.loads((tmp_path / "run.json").read_text())
     assert manifest["lease_token"] == "lease-redacted"
     assert manifest["lease_expires_at"] == "2026-07-08T12:15:00Z"
+    # Was `None`, which is what the orchestrator 422s on -- this assertion PINNED the bug that
+    # made `local-heavy-renew` fail on every invocation it has ever had. 5 is the fixture's
+    # `submit_expected_version`: renew performs no transition, so the unit's version is unchanged
+    # for the whole EXECUTING window.
     assert calls[1] == (
         "renew",
-        ("unit-1", 2, "lease-redacted", "local-heavy:unit-1:renew:a2", None),
+        ("unit-1", 2, "lease-redacted", "local-heavy:unit-1:renew:a2", 5),
     )
+
+
+def test_local_heavy_renew_sends_an_integer_expected_version_on_the_wire(tmp_path: Path) -> None:
+    """The bug was in what the client OMITTED, so no fake-client test could ever see it.
+
+    The test above substitutes a FakeClient and therefore observes Python arguments, not a request
+    body -- which is exactly how `expected_version: None` survived: it looked like a deliberate
+    argument rather than a payload the orchestrator rejects with 422 every time. This drives the
+    REAL `OrchestratorClient` over a mock transport and asserts on the rendered JSON, against the
+    orchestrator's actual contract (`RenewCommand` inherits `expected_version: int = Field(ge=0)`
+    from `CommandBase` -- required, and no null accepted).
+    """
+    brief = _runner_brief()
+    (tmp_path / "brief.json").write_text(brief.model_dump_json())
+    (tmp_path / "run.json").write_text(
+        json.dumps(
+            {
+                "attempt": 2,
+                "claim_id": "claim-1",
+                "context_snapshot_id": "snapshot-1",
+                "lease_token": "lease-redacted",
+                "package_revision_id": "rev-1",
+                "runtime": "local-heavy",
+                "submit_expected_version": 5,
+                "work_unit_id": "unit-1",
+                **_finalization_authority(tmp_path, brief),
+            }
+        )
+    )
+    bodies: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/renew"):
+            bodies.append(json.loads(request.read()))
+            return httpx.Response(
+                200,
+                json={
+                    "claim_id": "claim-1",
+                    "attempt": 2,
+                    "lease_token": "",
+                    "expires_at": "2026-07-08T12:15:00Z",
+                    "context_snapshot_id": "snapshot-1",
+                },
+            )
+        return httpx.Response(200, json=json.loads(brief.model_dump_json()))
+
+    transport = httpx.MockTransport(handler)
+    from factory_runner import cli as cli_module
+
+    original_client = cli_module.OrchestratorClient
+
+    def _transported(**kwargs: object) -> OrchestratorClient:
+        return original_client(**kwargs, transport=transport)  # type: ignore[arg-type]
+
+    cli_module.OrchestratorClient = _transported
+    try:
+        result = CliRunner().invoke(
+            app,
+            [
+                "local-heavy-renew",
+                "--orchestrator-url",
+                "https://sds.alobar.net",
+                "--credential-key-id",
+                "factory-runner-github",
+                "--work-unit-id",
+                "unit-1",
+                "--workspace-dir",
+                str(tmp_path),
+                "--idempotency-key",
+                "local-heavy:unit-1:renew:a2",
+            ],
+            env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+        )
+    finally:
+        cli_module.OrchestratorClient = original_client
+
+    assert result.exit_code == 0, result.output
+    assert len(bodies) == 1
+    body = bodies[0]
+    # `isinstance(True, int)` is True, so the bool exclusion is not pedantry.
+    assert isinstance(body["expected_version"], int)
+    assert not isinstance(body["expected_version"], bool)
+    assert body["expected_version"] == 5
+    assert body["attempt"] == 2
 
 
 def test_local_heavy_reclaim_uses_orchestrator_reclaim_api(tmp_path: Path) -> None:
@@ -1749,9 +1838,44 @@ def test_prepare_hides_agent_artifacts_from_git(tmp_path: Path) -> None:
 
     exclude = (git_dir / "exclude").read_text()
     assert "output.txt" in exclude
+    # The local-heavy workspace holds the live lease token in run.json. Before this entry
+    # existed, `git add -A` committed that credential into the pull request on every
+    # local-heavy run, in every target repository.
+    assert ".sds-local-heavy/" in exclude
     # The helper is worthless unless prepare_run actually calls it, before the coding
     # action runs and writes output.txt.
     assert "_exclude_agent_artifacts(" in inspect.getsource(cli_module.prepare_run)
+    # ...and worthless for the local-heavy lane unless _finalize_workspace calls it too.
+    # `prepare_run` serves only the dispatched lane, while the `git add -A` inside
+    # _finalize_workspace sweeps BOTH — which is precisely how the leak survived a fix.
+    assert "_exclude_agent_artifacts(" in inspect.getsource(cli_module._finalize_workspace)
+
+
+def test_a_workspace_inside_the_checkout_is_excluded_even_when_not_the_default(
+    tmp_path: Path,
+) -> None:
+    """`--workspace-dir` is configurable, so the literal in _AGENT_ARTIFACTS covers the default
+    only. A non-default workspace inside the checkout leaks exactly the same lease token."""
+    from factory_runner import cli as cli_module
+
+    (tmp_path / ".git" / "info").mkdir(parents=True)
+    workspace = tmp_path / "custom-heavy-workspace"
+
+    entry = cli_module._workspace_exclude_entry(workspace, tmp_path)
+    cli_module._exclude_agent_artifacts(tmp_path, entry)
+
+    assert entry == "custom-heavy-workspace/"
+    assert "custom-heavy-workspace/" in (tmp_path / ".git" / "info" / "exclude").read_text()
+
+
+def test_a_workspace_outside_the_checkout_needs_no_exclusion(tmp_path: Path) -> None:
+    """`git add -A` cannot reach outside the checkout, so an entry there would be noise."""
+    from factory_runner import cli as cli_module
+
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+
+    assert cli_module._workspace_exclude_entry(tmp_path / "elsewhere", checkout) == ""
 
 
 def _finalize_with_clean_tree(tmp_path: Path, *, base_sha: str | None, head_sha: str):

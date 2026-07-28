@@ -58,8 +58,16 @@ factory-runner local-heavy-prepare \
 ```
 
 This fetches the runner brief, validates the authority envelope, claims the unit,
-starts execution, and writes a gitignored local workspace at `.sds-local-heavy/`.
+starts execution, and writes a local workspace at `.sds-local-heavy/`.
 The prompt is sanitized and carries the SDS trailers required for commits and PRs.
+
+**The workspace holds the live lease token in `run.json`, and the runner is what keeps it
+out of git** — `finalize` writes `.sds-local-heavy/` (and a non-default `--workspace-dir`,
+when it sits inside the checkout) into the checkout's `.git/info/exclude` before it runs
+`git add -A`. This deliberately does **not** depend on the target repository having its own
+`.gitignore` entry: that is a fix you have to remember once per repository, and it was
+forgotten in two live fan-out targets while this documentation already claimed the directory
+was gitignored. It was not, in any repository, until 2026-07-28.
 
 Renew a long-running lease:
 
@@ -69,6 +77,11 @@ factory-runner local-heavy-renew \
   --credential-key-id factory-runner-github \
   --work-unit-id <unit-id>
 ```
+
+Renew works as documented as of 2026-07-28. Before then it returned HTTP 422 on **every**
+invocation — the client posted `expected_version: null` against a schema requiring an
+integer — so operators re-claimed at the evidence push instead. That workaround was a
+symptom of a dead command, never a design preference; it should not be carried forward.
 
 Recover an expired lease through the API:
 
