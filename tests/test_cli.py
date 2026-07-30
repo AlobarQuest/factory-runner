@@ -10,7 +10,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from factory_runner.cli import app
+from factory_runner.cli import _prompt, app
 from factory_runner.client import OrchestratorClient
 from factory_runner.command_policy import write_tool_policy
 from factory_runner.models import RunnerBrief
@@ -144,6 +144,75 @@ def _runner_brief() -> RunnerBrief:
             "standing_context": {"context_snapshot_id": "snapshot-1"},
         }
     )
+
+
+def _enrichment() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "profile": "software-delivery",
+        "change_class": "software-delivery",
+        "roads": [
+            {
+                "brain": "code",
+                "slug": "error-logging",
+                "name": "Error handling & structured logging",
+                "category": "application",
+                "status": "paved",
+                "summary": "How we handle errors and emit structured logs.",
+                "decided_approach": "structlog + asgi-correlation-id (Python) / pino (TS).",
+            }
+        ],
+        "rules": [
+            {
+                "brain": "code",
+                "id": 5,
+                "road_slug": "error-logging",
+                "category": "security",
+                "severity": "BLOCK",
+                "authority": "informational",
+                "rule": "Never log secrets, credentials, auth headers, tokens, or full bodies.",
+                "reason": "Logs are aggregated and retained; a secret in a log is a leaked secret.",
+            }
+        ],
+        "exemplars": [],
+        "content_fingerprint": "sha256:0000",
+        "resolved_at": "2026-07-30T00:00:00+00:00",
+        "sources": [{"brain": "code", "endpoint": "/api/road/error-logging", "query": "slug"}],
+    }
+
+
+def _brief_with_enrichment() -> RunnerBrief:
+    payload = _runner_brief().model_dump()
+    payload["enrichment"] = _enrichment()
+    return RunnerBrief.model_validate(payload)
+
+
+def test_runner_brief_accepts_enrichment() -> None:
+    brief = _brief_with_enrichment()
+
+    assert brief.enrichment is not None
+    assert brief.enrichment["rules"][0]["id"] == 5
+
+
+def test_runner_brief_enrichment_defaults_to_none() -> None:
+    assert _runner_brief().enrichment is None
+
+
+def test_prompt_renders_enrichment_as_governed_material() -> None:
+    prompt = _prompt(_brief_with_enrichment(), ("make check",))
+
+    assert "Governed standards for this change class" in prompt
+    assert "error-logging" in prompt
+    assert "Never log secrets" in prompt
+    assert "BLOCK" in prompt
+    # Governed material is explicitly NOT the hostile data the warning covers.
+    assert "These records are governed" in prompt
+
+
+def test_prompt_omits_the_enrichment_section_when_absent() -> None:
+    prompt = _prompt(_runner_brief(), ("make check",))
+
+    assert "Governed standards for this change class" not in prompt
 
 
 def test_prepare_requires_token_without_printing_value() -> None:

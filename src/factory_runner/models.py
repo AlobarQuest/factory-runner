@@ -81,3 +81,7 @@ class RunnerBrief(BaseModel):
     readiness: ReadinessBrief
     target: TargetBrief
     standing_context: dict[str, object]
+    # Governed knowledge projected per change class at authoring time (SDS WS-P2.12).
+    # Optional so a brief served by an orchestrator that predates the field still
+    # parses. It grants nothing: capabilities remain the sole source of permissions.
+    enrichment: dict[str, Any] | None = None
