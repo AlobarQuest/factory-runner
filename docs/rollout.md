@@ -45,3 +45,10 @@ uv run portfolio foundation
 cd ~/Projects/security-standards
 uv run python -m security_scan.cli ~/Projects/factory-runner --category security
 ```
+
+## Recommended caller pin
+
+`RECOMMENDED_CALLER_PIN` (repo root, single full SHA) declares the reusable-workflow
+revision callers should pin their `uses:` to. Bump it deliberately when a workflow
+change should propagate; the conformance kit (project-standards `portfolio onboard`)
+reads it by pointer and reports any caller behind it. Never point callers at `@main`.
