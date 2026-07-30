@@ -1,0 +1,89 @@
+{
+  "acceptance_criteria": [],
+  "authority": {
+    "envelope": {
+      "capabilities": {
+        "command.run": "allowed",
+        "github.pr.create": "allowed",
+        "orchestrator.claim": "allowed",
+        "orchestrator.evidence.write": "allowed",
+        "repo.edit": "allowed",
+        "repo.read": "allowed"
+      },
+      "constraints": {
+        "allowed_commands": ["make check"],
+        "mutation_commands": ["make check"],
+        "target_repository": "AlobarQuest/orchestrator",
+        "work_unit_id": "00000000-0000-0000-0000-000000000001"
+      }
+    },
+    "fingerprint": "0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31"
+  },
+  "enrichment": {
+    "change_class": "software-delivery",
+    "content_fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "exemplars": [],
+    "profile": "software-delivery",
+    "resolved_at": "2026-07-30T00:00:00+00:00",
+    "roads": [
+      {
+        "adr_ref": "code-standards/docs/decisions/0006-error-logging.md",
+        "brain": "code",
+        "category": "application",
+        "decided_approach": "structlog + asgi-correlation-id (Python) / pino (TS).",
+        "home": "ADR-0006 + Code Brain (this road)",
+        "name": "Error handling & structured logging",
+        "owner_standard": "code-standards",
+        "slug": "error-logging",
+        "status": "paved",
+        "summary": "How we handle errors and emit structured logs."
+      }
+    ],
+    "rules": [
+      {
+        "authority": "informational",
+        "brain": "code",
+        "category": "security",
+        "id": 5,
+        "reason": "Logs are aggregated and retained; a secret in a log is a leaked secret.",
+        "road_slug": "error-logging",
+        "rule": "Never log secrets, credentials, auth headers, tokens, or full request bodies. Redact or omit.",
+        "severity": "BLOCK"
+      }
+    ],
+    "schema_version": 1,
+    "sources": [
+      {
+        "brain": "code",
+        "endpoint": "/api/road/error-logging",
+        "query": "error-logging"
+      }
+    ]
+  },
+  "package": {
+    "content_hash": "sha256:abc",
+    "id": "pkg-enrichment",
+    "revision": 1,
+    "revision_id": "00000000-0000-0000-0000-000000000002",
+    "source_commit": "abc123",
+    "source_path": "package.yaml",
+    "source_repository": "AlobarQuest/orchestrator"
+  },
+  "readiness": {
+    "reasons": [],
+    "status": "ready"
+  },
+  "standing_context": {},
+  "target": {
+    "repository": "AlobarQuest/orchestrator"
+  },
+  "work_unit": {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "max_attempts": 3,
+    "outcome": "Logging follows the paved road.",
+    "required_capability": "repo.edit",
+    "state": "ready",
+    "title": "Adopt the structured-logging road",
+    "version": 1
+  }
+}
