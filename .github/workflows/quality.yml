@@ -1,0 +1,32 @@
+name: Quality
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.5.31"
+
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      # `make check` resolves every tool from .venv/bin and fails if one is
+      # missing, so a runner that skipped `uv sync` cannot report success.
+      - name: Run full quality gate
+        run: make check
