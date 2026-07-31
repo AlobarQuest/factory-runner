@@ -4,12 +4,26 @@ VENV_BIN := $(CURDIR)/.venv/bin
 NODE_BIN := $(CURDIR)/node_modules/.bin
 export PATH := $(VENV_BIN):$(NODE_BIN):$(PATH)
 
+RUFF := $(VENV_BIN)/ruff
+PYRIGHT := $(VENV_BIN)/pyright
+PYTEST := $(VENV_BIN)/pytest
+
+# A missing tool is a hard error, never a skip: a gate that skips is a gate that
+# attests. Tools resolve from the repo-local .venv so a global install cannot
+# collect against the wrong interpreter.
+require = @test -x $(1) || { echo "check: missing $(1) - run 'uv venv --clear && uv sync'"; exit 1; }
+
+# pytest exits 5 when it collects nothing; make propagates that as a failure.
 check:
-	@if command -v ruff >/dev/null 2>&1; then ruff check .; else echo "ruff not installed - skipping ruff check"; fi
-	@if command -v ruff >/dev/null 2>&1; then ruff format --check .; else echo "ruff not installed - skipping ruff format check"; fi
-	@if command -v pyright >/dev/null 2>&1; then pyright; else echo "pyright not installed - skipping pyright"; fi
-	@if command -v pytest >/dev/null 2>&1; then pytest; else echo "pytest not installed - skipping tests"; fi
+	$(call require,$(RUFF))
+	$(call require,$(PYRIGHT))
+	$(call require,$(PYTEST))
+	$(RUFF) check .
+	$(RUFF) format --check .
+	$(PYRIGHT)
+	$(PYTEST)
 
 fix:
-	@if command -v ruff >/dev/null 2>&1; then ruff check --fix .; else echo "ruff not installed - skipping ruff fix"; fi
-	@if command -v ruff >/dev/null 2>&1; then ruff format .; else echo "ruff not installed - skipping ruff format"; fi
+	$(call require,$(RUFF))
+	$(RUFF) check --fix .
+	$(RUFF) format .
