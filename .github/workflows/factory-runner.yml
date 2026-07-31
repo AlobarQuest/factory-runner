@@ -55,10 +55,10 @@ jobs:
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
       - name: Install pinned factory runner
-        run: uv tool install "git+https://github.com/AlobarQuest/factory-runner.git@c266769fd9e9aecf4e35ced29ad1605656e84d87"
+        run: uv tool install "git+https://github.com/AlobarQuest/factory-runner.git@c019d45ac7356f0979c8cae39451ade537a0b831"
 
       - name: Verify factory runner revision
-        run: factory-runner verify-install-revision --expected "c266769fd9e9aecf4e35ced29ad1605656e84d87"
+        run: factory-runner verify-install-revision --expected "c019d45ac7356f0979c8cae39451ade537a0b831"
 
       - name: Prepare scoped run
         id: prepare
