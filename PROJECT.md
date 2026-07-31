@@ -1,14 +1,22 @@
 ---
-project: factory-runner
-foundation: false
-status: ws43-local-heavy-merged
-owner: Devon
 name: factory-runner
+owner: Devon
 tier: active
-purpose: 'TODO: one-line purpose'
+status: active
+purpose: Reusable GitHub Actions factory runner and local-heavy runtime adapter
+  for the software delivery system.
 version: 0.1.0
 version_source: pyproject
-updated: '2026-07-10'
+updated: '2026-07-31'
+foundation: true
+foundation_contract: 1
+applicable_standards:
+  project: '1.0'
+  security: '1.0'
+  code: '1.0'
+required_checks:
+- id: quality
+  executor: github-actions:quality.yml:quality
 ---
 
 # Factory Runner
