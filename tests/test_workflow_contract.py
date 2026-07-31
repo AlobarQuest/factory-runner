@@ -1,7 +1,10 @@
 import re
 from pathlib import Path
 
+import typer.main
 import yaml
+
+from factory_runner.cli import app as cli_app
 
 
 def test_workflow_has_no_merge_permission_or_merge_command() -> None:
@@ -210,3 +213,88 @@ def test_failure_reporter_uses_only_supported_reasons_and_runner_credentials() -
     }
     assert "ANTHROPIC_API_KEY" not in str(report)
     assert "FACTORY_PR_TOKEN" not in str(report)
+
+
+_INVOCATION = re.compile(r"factory-runner\s+([a-z][a-z0-9-]*)")
+_OPTION = re.compile(r"(?<![\w-])--[a-z][a-z0-9-]*")
+
+
+def _accepted_options() -> dict[str, set[str]]:
+    """Every subcommand the CLI exposes, mapped to the long options it accepts.
+
+    Derived from the Typer app itself. A hand-maintained list would be a second
+    vocabulary that can drift from the first, which is the very defect class this
+    guard exists to catch.
+    """
+    group = typer.main.get_command(cli_app)
+    # Typer vendors click as `typer._click`, so the group type is not importable from a
+    # stable public path. Read the subcommands defensively and fail loudly if a future
+    # Typer stops exposing them, rather than silently vetting against an empty vocabulary.
+    commands = getattr(group, "commands", None)
+    assert commands, "cannot read the CLI's subcommands from the Typer app"
+    return {
+        name: {opt for param in command.params for opt in param.opts if opt.startswith("--")}
+        for name, command in commands.items()
+    }
+
+
+def _logical_command(runs: str, start: int) -> str:
+    """The invocation at `start` up to the end of its shell command.
+
+    Options are spread over backslash-continued lines, so a single line is not the
+    unit of an invocation.
+    """
+    consumed = []
+    for line in runs[start:].splitlines():
+        consumed.append(line.rstrip().removesuffix("\\"))
+        if not line.rstrip().endswith("\\"):
+            break
+    return " ".join(consumed)
+
+
+def _invocations_the_cli_would_reject(runs: str) -> list[str]:
+    accepted = _accepted_options()
+    rejected = []
+    for match in _INVOCATION.finditer(runs):
+        subcommand = match.group(1)
+        if subcommand not in accepted:
+            rejected.append(f"no such subcommand: factory-runner {subcommand}")
+            continue
+        command = _logical_command(runs, match.start())
+        rejected.extend(
+            f"factory-runner {subcommand}: unaccepted option {option}"
+            for option in _OPTION.findall(command)
+            if option not in accepted[subcommand]
+        )
+    return rejected
+
+
+def test_every_workflow_invocation_is_accepted_by_the_cli() -> None:
+    """Closes the GAP-4 class: SHA identity is not functional consistency.
+
+    On 2026-07-29 the workflow declared the right runner revision and still invoked
+    `finalize-run --execution-file`, an option only present in a later CLI. Both
+    `finalize-run` and `fail-run` exited 2, so the runner could not report its own
+    failure and a recoverable failure became a stranded unit with a spent attempt.
+    Neither lint nor type-checking can see across that boundary.
+    """
+    assert _invocations_the_cli_would_reject(_cli_steps()) == []
+
+
+def test_the_invocation_guard_rejects_what_the_cli_does_not_accept() -> None:
+    """A guard built to detect a failure is worth nothing until it is shown to fire."""
+    runs = _cli_steps()
+
+    bogus_option = runs.replace(
+        "factory-runner finalize-run \\",
+        "factory-runner finalize-run \\\n            --nonexistent-option \\",
+        1,
+    )
+    bogus_subcommand = runs.replace("factory-runner prepare-run", "factory-runner prepare-the-run")
+
+    assert _invocations_the_cli_would_reject(bogus_option) == [
+        "factory-runner finalize-run: unaccepted option --nonexistent-option"
+    ]
+    assert _invocations_the_cli_would_reject(bogus_subcommand) == [
+        "no such subcommand: factory-runner prepare-the-run"
+    ]
