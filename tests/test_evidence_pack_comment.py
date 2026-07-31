@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 from test_cli import _finalization_authority, _runner_brief
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from factory_runner.cli import app
 from factory_runner.client import OrchestratorError
@@ -50,6 +50,7 @@ class _RecordingClient:
     directly."""
 
     evidence_pack_error: Exception | None = None
+    _brief: RunnerBrief
 
     def __init__(self, calls: list[tuple[str, dict[str, object]]], **_kwargs: object) -> None:
         self._calls = calls
@@ -100,7 +101,7 @@ def _make_client_class(
     return Client
 
 
-def _run_finalize(tmp_path: Path) -> object:
+def _run_finalize(tmp_path: Path) -> Result:
     return CliRunner().invoke(
         app,
         [

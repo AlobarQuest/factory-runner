@@ -74,6 +74,8 @@ class _RecordingClient:
     """Mirrors the FakeClient shape used across tests/test_cli.py, but logs every call
     (in order) to a shared list so this module can assert ordering directly."""
 
+    _brief: RunnerBrief
+
     def __init__(self, calls: list[tuple[str, dict[str, object]]], **_kwargs: object) -> None:
         self._calls = calls
 
