@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -67,6 +68,7 @@ def build_pr_opened_evidence(
     pr_url: str,
     head_sha: str,
     verification: list[dict[str, object]] | None = None,
+    unknown_brief_keys: Sequence[str] = (),
     supersede: bool = False,
 ) -> dict[str, Any]:
     # The orchestrator keys current evidence on (revision, unit, ac_id) with no
@@ -77,6 +79,14 @@ def build_pr_opened_evidence(
         payload["verification"] = [
             build_verification_command_payload(command) for command in verification
         ]
+    # Brief keys this runner revision did not declare. Present only when there are any, so
+    # the ordinary payload is unchanged. Field NAMES only: the orchestrator's secret
+    # detector matches key names as well as values, and none of `api_key`, `authorization`,
+    # `bearer`, `body`, `credential`, `instruction`, `log`, `password`, `secret` or `token`
+    # appears in this key — which matters even though evidence payloads are not the surface
+    # that detector guards.
+    if unknown_brief_keys:
+        payload["unknown_brief_keys"] = list(unknown_brief_keys)
     return _base(
         revision_id=revision_id,
         ac_id=ac_id,

@@ -25,7 +25,21 @@
   non-empty — a future Typer that stops exposing subcommands must fail loudly
   rather than silently vet the workflow against an empty vocabulary.
 - The workflow/CLI contract guard checks `.github/workflows/factory-runner.yml`
-  against *this checkout's* CLI, not the CLI at the SHA the workflow installs. It
-  catches HEAD drifting away from what the workflow invokes — the direction that
-  caused GAP-4 — but not a pinned revision predating an option HEAD has. Closing
-  that direction requires installing and introspecting the pinned revision.
+  against *this checkout's* CLI. Until WS-P2.23 that was only ONE direction —
+  the workflow named a literal SHA, so the CLI it installed was a different
+  revision from the checkout being vetted, and a pinned revision predating an
+  option HEAD has was invisible. **The workflow now installs `job.workflow_sha`,
+  its own commit**, so the CLI it installs *is* the checkout the guard vets and
+  the guard is complete. `job.*` describes the workflow file defining the job
+  (factory-runner) even when called from another repo; `github.*` describes the
+  caller. Use `workflow_sha`, never `workflow_ref` — the ref is what the caller
+  pinned, unresolved, so a branch ref appears verbatim and is mutable.
+- `RunnerBrief` is `extra="allow"`; every other model here is `extra="forbid"`.
+  Strict on the brief guarded only the safe case — an old runner cannot use a
+  field it does not know about — while a renamed or removed field is caught by
+  required-field validation regardless. What strict actually did was turn "I'll
+  ignore this" into "every dispatch in the estate dies at brief-parse", which is
+  what happened for a full day from 2026-07-30. Undeclared keys are reported by
+  `unknown_brief_keys()` at the parse site and ride into the PR evidence payload;
+  do not "simplify" either half away — tolerating silently is the same defect
+  wearing the opposite coat.

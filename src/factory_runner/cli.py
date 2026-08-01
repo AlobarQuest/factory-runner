@@ -27,7 +27,7 @@ from factory_runner.command_policy import (
     write_tool_policy,
 )
 from factory_runner.evidence import build_pr_opened_evidence
-from factory_runner.models import RunnerBrief, RunnerPermissions
+from factory_runner.models import RunnerBrief, RunnerPermissions, unknown_brief_keys
 from factory_runner.pr_body import render_pr_body
 
 app = typer.Typer(no_args_is_help=True)
@@ -80,6 +80,26 @@ def verify_install_revision_command(
     except CodingResultError:
         typer.echo("factory runner revision verification failed", err=True)
         raise typer.Exit(code=1) from None
+
+
+def _fetched_brief(client: OrchestratorClient, work_unit_id: str) -> RunnerBrief:
+    """The one place a brief is parsed, so it is the one place drift is announced.
+
+    `RunnerBrief` tolerates keys it does not declare, so an orchestrator ahead of this
+    runner no longer kills the run. Announcing it here puts the drift at the top of the
+    Actions log; the durable record is the evidence payload finalization submits, because
+    an Actions log is not part of the orchestrator's record.
+    """
+    brief = client.get_runner_brief(work_unit_id)
+    unknown = unknown_brief_keys(brief)
+    if unknown:
+        typer.echo(
+            f"runner brief carries {len(unknown)} key(s) this runner revision does not "
+            f"declare: {', '.join(unknown)}. Proceeding — an undeclared key grants nothing "
+            "and is not required. This runner is behind the orchestrator serving it.",
+            err=True,
+        )
+    return brief
 
 
 def _sanitize_runner_brief(brief: RunnerBrief) -> dict[str, Any]:
@@ -552,7 +572,7 @@ def prepare(
     current_repository: Annotated[str, typer.Option()],
 ) -> None:
     client = _client(orchestrator_url, credential_key_id)
-    brief = client.get_runner_brief(work_unit_id)
+    brief = _fetched_brief(client, work_unit_id)
     permissions = validate_authority(
         brief.authority.envelope,
         work_unit_id=work_unit_id,
@@ -580,7 +600,7 @@ def prepare_run(
 ) -> None:
     _exclude_agent_artifacts(Path.cwd())
     client = _client(orchestrator_url, credential_key_id)
-    brief = client.get_runner_brief(work_unit_id)
+    brief = _fetched_brief(client, work_unit_id)
     permissions = validate_authority(
         brief.authority.envelope,
         work_unit_id=work_unit_id,
@@ -615,7 +635,7 @@ def local_heavy_prepare(
     workspace_dir: Annotated[str, typer.Option()] = ".sds-local-heavy",
 ) -> None:
     client = _client(orchestrator_url, credential_key_id)
-    brief = client.get_runner_brief(work_unit_id)
+    brief = _fetched_brief(client, work_unit_id)
     attempt, _workspace, _settings_path = _prepare_claimed_workspace(
         client=client,
         brief=brief,
@@ -672,7 +692,7 @@ def local_heavy_reclaim(
     idempotency_key: Annotated[str | None, typer.Option()] = None,
 ) -> None:
     client = _client(orchestrator_url, credential_key_id)
-    brief = client.get_runner_brief(work_unit_id)
+    brief = _fetched_brief(client, work_unit_id)
     permissions = validate_authority(
         brief.authority.envelope,
         work_unit_id=work_unit_id,
@@ -931,6 +951,9 @@ def _finalize_workspace(
             pr_url=pr_url,
             head_sha=head_sha,
             verification=verification_payloads,
+            # brief.json is re-read here, and `extra="allow"` round-trips the undeclared
+            # keys through it, so finalize sees exactly what prepare parsed.
+            unknown_brief_keys=unknown_brief_keys(brief),
             supersede=supersede,
             idempotency_key=f"factory-runner:{work_unit_id}:evidence:pr:a{attempt}",
             **common,
@@ -977,7 +1000,7 @@ def _refreshed_finalization_permissions(
     checkout: Path,
     protected_paths: tuple[Path, ...],
 ) -> RunnerPermissions:
-    refreshed_brief = client.get_runner_brief(work_unit_id)
+    refreshed_brief = _fetched_brief(client, work_unit_id)
     saved_fingerprint = run.get("authority_fingerprint")
     if (
         not isinstance(saved_fingerprint, str)
