@@ -89,6 +89,9 @@ def test_the_coding_action_pins_a_current_model_via_the_input() -> None:
     assert "ANTHROPIC_MODEL" not in (step.get("env") or {})
 
 
+_LITERAL_SHA = re.compile(r"\b[0-9a-f]{40}\b")
+
+
 def test_workflow_pins_runner_and_coding_action_before_any_claim() -> None:
     data = yaml.safe_load(Path(".github/workflows/factory-runner.yml").read_text())
     workflow = Path(".github/workflows/factory-runner.yml").read_text()
@@ -98,20 +101,41 @@ def test_workflow_pins_runner_and_coding_action_before_any_claim() -> None:
 
     assert "runner_revision" not in workflow_call_inputs
     assert "runner_revision" not in dispatch_inputs
-    assert (
-        'uv tool install "git+https://github.com/AlobarQuest/factory-runner.git@'
-        'c019d45ac7356f0979c8cae39451ade537a0b831"' in workflow
-    )
-    assert (
-        "factory-runner verify-install-revision --expected "
-        '"c019d45ac7356f0979c8cae39451ade537a0b831"'
-    ) in workflow
     assert "inputs.runner_revision" not in workflow
     assert "factory-runner.git@beta" not in workflow
-    assert "uv tool install git+https://github.com/AlobarQuest/factory-runner.git\n" not in workflow
     assert "anthropics/claude-code-base-action@e8132bc5e637a42c27763fc757faa37e1ee43b34" in workflow
     names = [step.get("name") for step in steps]
     assert names.index("Verify factory runner revision") < names.index("Prepare scoped run")
+
+
+def test_the_install_and_its_verification_both_derive_from_this_workflows_own_commit() -> None:
+    """The revision is an EXPRESSION, so there is no literal SHA left to assert identity on.
+
+    A literal was the whole defect class: this workflow could only ever name a commit that
+    already existed, so the workflow and the CLI it installed were different revisions by
+    construction, and keeping them compatible was a prose rule nothing enforced. `job.*`
+    describes the workflow file defining the job — factory-runner, even when called from
+    another repo — so building the install target from `job.workflow_sha` makes the caller's
+    pin, this workflow and the installed CLI one commit.
+
+    This replaces the retired SHA-identity assertions: a future edit that reintroduces a
+    literal, or that reaches for the mutable `workflow_ref`, is caught here.
+    """
+    install = _named_step("Install pinned factory runner")["run"]
+    verify = _named_step("Verify factory runner revision")["run"]
+
+    assert "@${{ job.workflow_sha }}" in install
+    assert "github.com/${{ job.workflow_repository }}.git" in install
+    assert '--expected "${{ job.workflow_sha }}"' in verify
+    for step_name, run in (("install", install), ("verify", verify)):
+        assert not _LITERAL_SHA.search(run), (
+            f"the {step_name} step names a literal commit again. The workflow can only name a "
+            "commit that already exists, so a literal reintroduces the workflow/CLI split this "
+            "expression exists to close."
+        )
+        # workflow_ref carries the ref the caller pinned, UNRESOLVED: a branch ref appears
+        # verbatim and is therefore mutable. Only workflow_sha is immutable.
+        assert "job.workflow_ref" not in run
 
 
 def test_workflow_pins_executable_actions_to_exact_commits() -> None:

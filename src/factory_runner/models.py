@@ -72,7 +72,19 @@ class TargetBrief(BaseModel):
 
 
 class RunnerBrief(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # `extra="allow"`, deliberately, and ONLY here — the command and authority envelopes
+    # keep `extra="forbid"`.
+    #
+    # Strict guarded only the safe case. An old runner cannot use a field it does not know
+    # about, so forbidding additions protected nothing; a RENAMED or REMOVED field is caught
+    # by required-field validation whatever `extra` says. What strict actually did was turn
+    # "I'll ignore this" into "every dispatch in the estate dies at brief-parse" — which is
+    # exactly what happened for a full day from 2026-07-30, unnoticed.
+    #
+    # Plain relaxation would turn it into silence instead, which is the same defect wearing
+    # the opposite coat. So: tolerate AND report. `unknown_brief_keys` reads what landed
+    # here, and the runner carries it into the evidence the orchestrator retains.
+    model_config = ConfigDict(extra="allow")
 
     work_unit: WorkUnitBrief
     package: PackageBrief
@@ -85,3 +97,14 @@ class RunnerBrief(BaseModel):
     # Optional so a brief served by an orchestrator that predates the field still
     # parses. It grants nothing: capabilities remain the sole source of permissions.
     enrichment: dict[str, Any] | None = None
+
+
+def unknown_brief_keys(brief: RunnerBrief) -> tuple[str, ...]:
+    """Top-level brief keys this runner revision does not declare.
+
+    Non-empty means the orchestrator is ahead of the pinned runner. The run proceeds —
+    an undeclared key grants nothing and is not needed — but the names travel into the
+    evidence the orchestrator retains, so the drift is a record rather than a log line
+    in an Actions run nobody reads.
+    """
+    return tuple(sorted(brief.model_extra or {}))

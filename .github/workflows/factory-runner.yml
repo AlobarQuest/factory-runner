@@ -54,11 +54,19 @@ jobs:
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
+      # `job.workflow_*` describes the workflow file defining THIS job — in a reusable
+      # workflow that is factory-runner, not the caller (`github.*` is the caller). So the
+      # workflow installs its own commit: the caller's pin, this workflow and the installed
+      # CLI are one revision by construction, and the ordering rule that used to live only
+      # in prose cannot be violated. `workflow_sha`, never `workflow_ref` — the ref is what
+      # the caller pinned, unresolved, so a branch ref appears verbatim and is mutable.
       - name: Install pinned factory runner
-        run: uv tool install "git+https://github.com/AlobarQuest/factory-runner.git@c019d45ac7356f0979c8cae39451ade537a0b831"
+        run: uv tool install "git+https://github.com/${{ job.workflow_repository }}.git@${{ job.workflow_sha }}"
 
+      # Not tautological: verify-install-revision reads the INSTALLED distribution's
+      # direct_url.json, written by uv from what it actually resolved. Independent source.
       - name: Verify factory runner revision
-        run: factory-runner verify-install-revision --expected "c019d45ac7356f0979c8cae39451ade537a0b831"
+        run: factory-runner verify-install-revision --expected "${{ job.workflow_sha }}"
 
       - name: Prepare scoped run
         id: prepare
