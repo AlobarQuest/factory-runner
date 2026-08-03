@@ -1,0 +1,28 @@
+{
+  "budgets": {
+    "max_attempts": 3,
+    "max_llm_calls": 6
+  },
+  "capabilities": {
+    "command.run": "allowed",
+    "github.pr.create": "allowed",
+    "orchestrator.claim": "allowed",
+    "orchestrator.evidence.write": "allowed",
+    "repo.edit": "allowed",
+    "repo.read": "allowed"
+  },
+  "change_class": "maintenance-remediation",
+  "conformance": {
+    "accepted_standards": [],
+    "standards_touched": ["project"],
+    "status": "green"
+  },
+  "constraints": {
+    "allowed_commands": [
+      "uv sync",
+      "make check"
+    ],
+    "target_repository": "AlobarQuest/intent-packages",
+    "work_unit_id": "__WORK_UNIT_ID__"
+  }
+}

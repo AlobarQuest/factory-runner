@@ -58,24 +58,35 @@ def _validate_constraints(
 
 
 def _validate_commands(envelope: AuthorityEnvelope) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    if _allowed(envelope, "command.run"):
-        allowed_commands = _non_empty_string_list(envelope.constraints.get("allowed_commands"))
-        if allowed_commands is None:
-            raise AuthorityError(
-                "constraints.allowed_commands must be a non-empty list of non-empty strings"
-            )
-        mutation_commands = _non_empty_string_list(envelope.constraints.get("mutation_commands"))
-        if mutation_commands is None:
+    # mutation_commands is required only for dependency-update work, where a command
+    # produces the diff. Edit-shaped work mutates through the coding agent, so the
+    # honest envelope omits the key entirely; a present key must always be well-formed.
+    # This predicate is a cross-repo contract with AlobarQuest/orchestrator
+    # (kernel/runner_authority.py), pinned by the shared envelope fixtures.
+    if not _allowed(envelope, "command.run"):
+        return (), ()
+
+    allowed_commands = _non_empty_string_list(envelope.constraints.get("allowed_commands"))
+    if allowed_commands is None:
+        raise AuthorityError(
+            "constraints.allowed_commands must be a non-empty list of non-empty strings"
+        )
+    if "mutation_commands" not in envelope.constraints:
+        if envelope.change_class == "dependency-update":
             raise AuthorityError(
                 "constraints.mutation_commands must be a non-empty list of non-empty strings"
             )
-        if any(command not in allowed_commands for command in mutation_commands):
-            raise AuthorityError(
-                "every mutation command must also appear in constraints.allowed_commands"
-            )
-        return allowed_commands, mutation_commands
-
-    return (), ()
+        return allowed_commands, ()
+    mutation_commands = _non_empty_string_list(envelope.constraints["mutation_commands"])
+    if mutation_commands is None:
+        raise AuthorityError(
+            "constraints.mutation_commands must be a non-empty list of non-empty strings"
+        )
+    if any(command not in allowed_commands for command in mutation_commands):
+        raise AuthorityError(
+            "every mutation command must also appear in constraints.allowed_commands"
+        )
+    return allowed_commands, mutation_commands
 
 
 def _non_empty_string_list(value: Any) -> tuple[str, ...] | None:

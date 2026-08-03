@@ -107,10 +107,82 @@ def test_command_run_requires_allowlist() -> None:
         )
 
 
+def test_dependency_update_requires_mutation_commands() -> None:
+    """The requirement is keyed on the declared change class, not on command.run alone."""
+    envelope = _envelope().model_copy(
+        update={
+            "change_class": "dependency-update",
+            "constraints": {
+                "work_unit_id": "unit-1",
+                "target_repository": "AlobarQuest/orchestrator",
+                "allowed_commands": ["make check"],
+            },
+        }
+    )
+
+    with pytest.raises(AuthorityError, match="mutation_commands"):
+        validate_authority(
+            envelope,
+            work_unit_id="unit-1",
+            target_repo="AlobarQuest/orchestrator",
+            current_repo="AlobarQuest/orchestrator",
+        )
+
+
+@pytest.mark.parametrize("change_class", [None, "maintenance-remediation"])
+def test_edit_shaped_envelope_needs_no_mutation_commands(change_class: str | None) -> None:
+    """Edit-shaped work mutates via the coding agent; no command produces the diff."""
+    envelope = _envelope().model_copy(
+        update={
+            "change_class": change_class,
+            "constraints": {
+                "work_unit_id": "unit-1",
+                "target_repository": "AlobarQuest/orchestrator",
+                "allowed_commands": ["make check"],
+            },
+        }
+    )
+
+    permissions = validate_authority(
+        envelope,
+        work_unit_id="unit-1",
+        target_repo="AlobarQuest/orchestrator",
+        current_repo="AlobarQuest/orchestrator",
+    )
+
+    assert permissions.allowed_commands == ("make check",)
+    assert permissions.mutation_commands == ()
+
+
+@pytest.mark.parametrize("change_class", [None, "maintenance-remediation"])
+def test_explicit_empty_mutation_commands_is_refused_for_any_class(
+    change_class: str | None,
+) -> None:
+    """Absence says "no command mutates"; a present-but-empty list is malformed."""
+    envelope = _envelope().model_copy(
+        update={
+            "change_class": change_class,
+            "constraints": {
+                "work_unit_id": "unit-1",
+                "target_repository": "AlobarQuest/orchestrator",
+                "allowed_commands": ["make check"],
+                "mutation_commands": [],
+            },
+        }
+    )
+
+    with pytest.raises(AuthorityError, match="mutation_commands"):
+        validate_authority(
+            envelope,
+            work_unit_id="unit-1",
+            target_repo="AlobarQuest/orchestrator",
+            current_repo="AlobarQuest/orchestrator",
+        )
+
+
 @pytest.mark.parametrize(
     ("constraints", "message"),
     [
-        ({"allowed_commands": ["make check"]}, "mutation_commands"),
         (
             {
                 "allowed_commands": ["uv sync", "make check"],
