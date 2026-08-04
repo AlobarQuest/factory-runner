@@ -1,0 +1,13 @@
+{
+  "envelope_fields": [
+    "budgets",
+    "capabilities",
+    "change_class",
+    "conformance",
+    "constraints"
+  ],
+  "levels": [
+    "allowed",
+    "prohibited"
+  ]
+}
