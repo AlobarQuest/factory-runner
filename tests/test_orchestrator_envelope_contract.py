@@ -16,6 +16,13 @@ The second fixture pins the rule the first one cannot: `mutation_commands` is re
 agent produces the diff and no command mutates a tracked file. Both repos enforce the same
 predicate; WS-P2.33 exists because they did not, and the byte-identical dependency-update
 fixture stayed green while production disagreed.
+
+The THIRD fixture, `runner_capability_levels.json`, pins the rule neither envelope can:
+every capability in both of them is declared "allowed", so their bytes are satisfied by a
+one-term level set and say nothing about "prohibited". `SUPPORTED_LEVELS` is derived from
+it here, and the orchestrator derives its own ingress set from a byte-identical copy
+(WS-P2.34) — until then the orchestrator validated capability NAMES and never LEVELS, and
+admitted envelopes this module refuses.
 """
 
 import hashlib
@@ -27,6 +34,7 @@ import pytest
 
 from factory_runner.authority import (
     SUPPORTED_CAPABILITIES,
+    SUPPORTED_LEVELS,
     AuthorityError,
     validate_authority,
 )
@@ -38,6 +46,9 @@ CONTRACT_SHA256 = "049ab53e2b257fa3d7eb24748a4278ffc7e0e91f8174b05220eefd7d526e5
 
 FIXTURE_EDIT = Path(__file__).resolve().parent / "fixtures" / "runner_authority_envelope_edit.json"
 CONTRACT_SHA256_EDIT = "90b73de69bdd9d5ee88be38b0a0ac2eeff1e4bb467ec72062cd1b70f49888f6e"
+
+FIXTURE_LEVELS = Path(__file__).resolve().parent / "fixtures" / "runner_capability_levels.json"
+CONTRACT_SHA256_LEVELS = "f4e0d192f5f16b93cbb94f22f8ed6031fdd7b658554bddfd528b56737a76053f"
 
 WORK_UNIT_ID = "8302c75c-e083-5a67-bfd6-63021b90d6da"
 TARGET_REPOSITORY = "AlobarQuest/change-manager"
@@ -189,3 +200,39 @@ def test_runner_grants_nothing_from_the_orchestrator_only_fields() -> None:
         target_repo=TARGET_REPOSITORY,
         current_repo=TARGET_REPOSITORY,
     )
+
+
+def test_golden_capability_levels_are_unchanged() -> None:
+    canonical = json.dumps(json.loads(FIXTURE_LEVELS.read_text()), sort_keys=True)
+
+    assert hashlib.sha256(canonical.encode()).hexdigest() == CONTRACT_SHA256_LEVELS
+
+
+def test_shipped_levels_match_the_pinned_level_contract() -> None:
+    """The level vocabulary is a cross-repo contract, and this is the derivation half of it.
+
+    A hash pin proves the file is unchanged; it says nothing about whether anything reads it.
+    The orchestrator asserts the same equality against its own CAPABILITY_LEVELS and a
+    byte-identical copy, so dropping a term on either side reds the side that was not updated.
+    """
+    assert SUPPORTED_LEVELS == frozenset(json.loads(FIXTURE_LEVELS.read_text())["levels"])
+
+
+def test_a_package_authority_level_is_refused() -> None:
+    """The rule the level contract pins, negative direction.
+
+    `requires_approval` is the orchestrator's PACKAGE-authority vocabulary, which a human
+    projects into unit capabilities by hand. It is not a level this runner accepts, and until
+    WS-P2.34 the orchestrator would admit it — the run then died here with its ordinal spent.
+    """
+    payload = json.loads(FIXTURE_EDIT.read_text())
+    payload["capabilities"]["command.run"] = "requires_approval"
+    envelope = AuthorityEnvelope.model_validate(payload)
+
+    with pytest.raises(AuthorityError, match="unsupported capability level"):
+        validate_authority(
+            envelope,
+            work_unit_id=payload["constraints"]["work_unit_id"],
+            target_repo=payload["constraints"]["target_repository"],
+            current_repo=payload["constraints"]["target_repository"],
+        )
