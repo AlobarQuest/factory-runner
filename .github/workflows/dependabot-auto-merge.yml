@@ -1,0 +1,37 @@
+name: Dependabot auto-merge
+
+# The native lane (ADR-0016, orchestrator/docs/decisions/0016-…): routine dependency updates
+# land without the factory, whose differentiated value is fixing the ones that FAIL.
+#
+# Two properties this file deliberately has:
+#   * It ENABLES GitHub's auto-merge rather than merging. GitHub then enforces "merge only when
+#     the required checks pass" — this workflow never inspects CI and so cannot get that wrong.
+#     Note auto-merge with NO required status check merges immediately; the branch protection
+#     applied 2026-08-06 is therefore a precondition, not a nicety.
+#   * Patch and minor only. A major bump falls through to a human, deliberately.
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    name: Dependabot auto-merge
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read the update's metadata
+        id: meta
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Enable auto-merge for patch and minor updates
+        if: |
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          steps.meta.outputs.update-type == 'version-update:semver-minor'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
