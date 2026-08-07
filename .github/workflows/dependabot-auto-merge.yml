@@ -18,8 +18,15 @@ name: Dependabot auto-merge
 #     used only by orchestrator's `workflow_dispatch` release build — is in a repo with no
 #     auto-merge workflow, so it is out of scope here.
 #   * Package majors still fall through to a human, deliberately.
-#   * `package-ecosystem` echoes the string from THIS repo's dependabot.yml, not a normalized
-#     name, so the literal below must match that file. A mismatch fails closed: nothing arms.
+#   * The literal below is `github_actions` with an UNDERSCORE, and that is not a typo.
+#     fetch-metadata's own action.yml documents this output as "the `package-ecosystem`
+#     configuration that was used by dependabot", which is wrong about its own output:
+#     `update_metadata.ts` sets `packageEcosystem: chunks[1]`, i.e. the second segment of
+#     the BRANCH NAME (`dependabot/github_actions/...`), which is Dependabot's normalized
+#     identifier. dependabot.yml spells it `github-actions` with a hyphen; the output does
+#     not. Measured from a real run rather than read from the docs — the action logs
+#     `outputs.package-ecosystem: github_actions`. A mismatch fails closed: nothing arms,
+#     silently, which is how the first attempt at this shipped and cleared nothing.
 on: pull_request
 
 permissions:
@@ -42,7 +49,7 @@ jobs:
         if: |
           steps.meta.outputs.update-type == 'version-update:semver-patch' ||
           steps.meta.outputs.update-type == 'version-update:semver-minor' ||
-          steps.meta.outputs.package-ecosystem == 'github-actions'
+          steps.meta.outputs.package-ecosystem == 'github_actions'
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
