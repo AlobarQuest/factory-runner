@@ -8,16 +8,32 @@ name: Dependabot auto-merge
 #     the required checks pass" — this workflow never inspects CI and so cannot get that wrong.
 #     Note auto-merge with NO required status check merges immediately; the branch protection
 #     applied 2026-08-06 is therefore a precondition, not a nicety.
-#   * Patch and minor for every ecosystem — plus MAJOR bumps of GitHub Actions, which are a
-#     different risk wearing the same version-number shape. A package major changes what ships
-#     and can pass every check then break at runtime; an Actions major changes how CI runs, and
-#     the required check that gates it IS the thing being bumped, so passing it means the new
-#     version has been exercised exactly as it will be used. Verified 2026-08-07 rather than
-#     assumed: every Actions dependency in this repo is used by a job that runs on
-#     `pull_request`. The one estate case where that is false — `docker/setup-buildx-action`,
-#     used only by orchestrator's `workflow_dispatch` release build — is in a repo with no
-#     auto-merge workflow, so it is out of scope here.
-#   * Package majors still fall through to a human, deliberately.
+#   * It is a CASCADE, and the condition below is written to read as one. Q1: is the declared
+#     intent sufficient on its own? Patch and minor are, in every ecosystem. Q2, asked only
+#     when Q1 says no: the intent is `major`, which we do not accept on its own — is there
+#     another reason this one is safe? For GitHub Actions there is, and it is not the category
+#     itself: the required check that gates the pull request IS the thing being bumped, so
+#     passing it means the new version has been exercised exactly as it will be used. A package
+#     major has no such property — it changes what ships and can pass every check then break at
+#     runtime — so it still falls through to a human.
+#
+#     Until 2026-08-08 these were three peers ORed together, which misrepresented the logic:
+#     the first two answer "what kind of change is this?" and the third answered "what kind of
+#     thing is being changed?". Two answers to different questions cannot constrain each other,
+#     so the third admitted its ENTIRE category rather than the majors its name claimed, and it
+#     subsumed the first two inside that category. Restating it as the cascade changes no
+#     decision the gate has ever made; it closes one combination — an absent update-type in
+#     github_actions — that never occurred in 26 pull requests and that the fail-closed model
+#     does not want open. See STANDARDS.md, "One question per predicate".
+#
+#     Verified 2026-08-07 rather than assumed: every Actions dependency in this repo is used by
+#     a job that runs on `pull_request`. The one estate case where that is false —
+#     `docker/setup-buildx-action`, used only by orchestrator's `workflow_dispatch` release
+#     build — is in a repo with no auto-merge workflow, so it is out of scope here.
+#   * An update with NO declared intent is refused, and now says so rather than merely failing
+#     to match. Dependabot omits `update-type` for requirement-range bumps and for tags it
+#     cannot parse as semver, so the absence covers several unlike situations and asserts
+#     nothing about any of them.
 #   * The literal below is `github_actions` with an UNDERSCORE, and that is not a typo.
 #     fetch-metadata's own action.yml documents this output as "the `package-ecosystem`
 #     configuration that was used by dependabot", which is wrong about its own output:
@@ -45,11 +61,12 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Enable auto-merge for patch, minor, and GitHub Actions major updates
+      - name: Enable auto-merge when the intent suffices, or a major is exercised by the gate
         if: |
           steps.meta.outputs.update-type == 'version-update:semver-patch' ||
           steps.meta.outputs.update-type == 'version-update:semver-minor' ||
-          steps.meta.outputs.package-ecosystem == 'github_actions'
+          (steps.meta.outputs.update-type == 'version-update:semver-major' &&
+           steps.meta.outputs.package-ecosystem == 'github_actions')
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
