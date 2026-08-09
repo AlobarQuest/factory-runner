@@ -65,8 +65,15 @@ def test_maps_prohibited_repo_edit_to_false_permission() -> None:
 
 
 def test_unknown_capability_fails_closed() -> None:
+    """The example is deliberately synthetic, and that is the point of it.
+
+    This test used `github.merge` until WS-P3.7 Increment 3, which added `github.pr.merge` to
+    the vocabulary -- one letter-group away from asserting the behaviour that increment changed.
+    A negative control keyed on a name somebody might plausibly ship is a control with an expiry
+    date on it; `not.a.capability` cannot become real without somebody noticing.
+    """
     envelope = _envelope().model_copy(
-        update={"capabilities": {**_envelope().capabilities, "github.merge": "allowed"}}
+        update={"capabilities": {**_envelope().capabilities, "not.a.capability": "allowed"}}
     )
 
     with pytest.raises(AuthorityError, match="unsupported capability"):
