@@ -28,6 +28,10 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
+# ruff 0.16 formats Python code blocks inside Markdown; 0.15 did not. The affected
+# files here are ADRs and historical plan documents — the record, not code — so the
+# formatter is excluded from them rather than allowed to rewrite them.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C90"]
