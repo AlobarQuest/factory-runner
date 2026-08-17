@@ -13,7 +13,7 @@ foundation_contract: 1
 applicable_standards:
   project: '1.0'
   security: '1.0'
-  code: '1.0'
+  code: '1.1'
 required_checks:
 - id: quality
   executor: github-actions:quality.yml:quality
