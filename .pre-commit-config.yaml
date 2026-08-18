@@ -1,0 +1,34 @@
+# code-standards pre-commit config (vendored for HUMANS). Edit upstream and `code-standards sync`.
+# Install: `pip install pre-commit && pre-commit install`
+# Run manually: `pre-commit run --all-files`
+#
+# Pin rev: to the same versions used by your project's tooling (local == CI parity).
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.1
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v4.0.0-alpha.8
+    hooks:
+      - id: prettier
+        types_or: [javascript, jsx, typescript, tsx, css, json, yaml, markdown]
+
+  - repo: https://github.com/pre-commit/mirrors-eslint
+    rev: v9.18.0
+    hooks:
+      - id: eslint
+        files: \.(js|jsx|ts|tsx|mjs|cjs)$
+        types: [file]
+        additional_dependencies:
+          - eslint@^9.18.0
+
+  - repo: https://github.com/koalaman/shellcheck-precommit
+    rev: v0.10.0
+    hooks:
+      - id: shellcheck
+        args: [--severity=warning]

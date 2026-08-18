@@ -1,0 +1,7 @@
+languages = ["python"]
+template_set = "v1"
+baseline = []
+
+[tool_versions]
+ruff = "0.16.2"
+pyright = "1.1.411"

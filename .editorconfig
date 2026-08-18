@@ -1,0 +1,28 @@
+# code-standards vendored .editorconfig. Edit upstream and `code-standards sync`.
+#
+# Editor-level defaults applied BEFORE the linters run (indentation, charset,
+# newlines), kept aligned with ruff (4-space Python, line-length 100) and prettier
+# (2-space TS/JSON/YAML, printWidth 100) so editors and linters agree rather than
+# fight. See https://editorconfig.org.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+max_line_length = 100
+
+# Python is 4-space (ruff's default; matches the vendored ruff config).
+[*.py]
+indent_size = 4
+
+# Makefiles REQUIRE tab indentation — re-indenting to spaces breaks the recipes.
+[Makefile]
+indent_style = tab
+
+# Markdown uses trailing whitespace for hard line breaks; don't strip it.
+[*.md]
+trim_trailing_whitespace = false
