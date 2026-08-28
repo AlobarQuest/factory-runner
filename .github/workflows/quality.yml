@@ -5,6 +5,22 @@ on:
     branches: ["**"]
   pull_request:
     branches: ["**"]
+  # A daily run of this same gate against the default branch, added 2026-08-15.
+  # The Dependabot cascade arms with the token the CI platform supplies, and a landing
+  # made with that token fires no `push` event -- so a bump can reach `main` with this
+  # gate never having run on the result. Asking the question on a clock closes that
+  # hole without changing which identity lands the pull request.
+  #
+  # It does NOT attribute a failure to the commit that caused it: a red scheduled run
+  # means bisecting the day's landings. That is the accepted cost of leaving the
+  # arming identity alone; the tightening that would remove it is a separate decision.
+  #
+  # The minute is off the hour on purpose -- runs queued at :00 are delayed -- and is
+  # staggered against the other five lane repositories. Times are UTC: 11:03 is after
+  # the 02:00-06:00 window in which this estate lands changes unattended, so an
+  # overnight landing is checked the same morning.
+  schedule:
+    - cron: "3 11 * * *"
 
 jobs:
   quality:
