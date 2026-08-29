@@ -80,21 +80,38 @@ name: Dependabot auto-merge
 #     required status check acts immediately, on anything. All six require at least one check
 #     that runs on `pull_request`, read back from the protection API on 2026-08-28. A repository
 #     joining this lane must do the same BEFORE installing this file, not after.
-#   * EDITING THIS FILE ARMS NOTHING THAT IS ALREADY OPEN. `on: pull_request` fires on opened,
-#     synchronize and reopened, so a pull request that exists when this lands gets no event and
+#   * EDITING THIS FILE ARMS NOTHING THAT IS ALREADY OPEN. `on: pull_request_target` fires on
+#     opened, synchronize and reopened — the same three activity types its predecessor
+#     `pull_request` did — so a pull request that exists when this lands gets no event and
 #     no evaluation, however plainly the new rule permits it. The standing backlog is exactly
 #     what this change is FOR, so that is the normal case rather than an edge one — and the
 #     landing ledger's Detector B reports a permitted, green, unarmed update as a FINDING with
 #     no settle window. Give the queue a synchronize event (`PUT /pulls/{n}/update-branch`) in
 #     the same operation that installs this rule, or the nightly audit stays red until the
 #     update bot next rebases each branch of its own accord — a week, on a weekly schedule.
-#   * A landing this lane produces SKIPS the branch's own push run. Measured across three
-#     repositories on 2026-08-11: an auto-merge armed with `secrets.GITHUB_TOKEN` triggers no
-#     `on: push` workflow, so `main` can go red with nothing reporting it until the next
-#     scheduled verification. ADR-0034 reopened the arming-credential question on a changed fact
-#     — a wider rule drains the queue faster, so the gap between landing and verification
-#     matters more than it did — and deliberately did not settle it. A known residual, not an
-#     oversight.
+#   * THE TRIGGER IS `pull_request_target` AND NOTHING HERE READS THE BRANCH'S CONTENT. That
+#     restraint is the whole reason the trigger is defensible: the standing objection to
+#     `pull_request_target` is that it runs with the base repository's secrets against a branch
+#     somebody else wrote. This file has no `actions/checkout`, executes nothing from the
+#     branch, and asks the API for metadata through an action pinned by sha. ADDING A CHECKOUT
+#     STEP HERE, OR ANY STEP THAT READS THE BRANCH, IS THE ONE EDIT THIS FILE MUST NEVER
+#     RECEIVE. Reading the gate itself from the BASE branch is separately stronger for a gate
+#     than reading it from the branch under judgement.
+#   * THE ARM USES `FACTORY_PR_TOKEN`, NOT `secrets.GITHUB_TOKEN`, AND THAT IS WHAT THE TRIGGER
+#     ABOVE IS FOR. An auto-merge armed with `secrets.GITHUB_TOKEN` fires no `on: push`
+#     workflow — GitHub's recursion guard — so every landing this lane produced reached `main`
+#     with the repository's own gate never having run on the result. Measured across three
+#     repositories on 2026-08-11, and again across the six landings of 2026-08-28, none of
+#     which carries a push run. ADR-0034 reopened the question on a changed fact — a wider rule
+#     drains the queue faster, so the gap between landing and verification matters more than it
+#     did — and left it open; ADR-0035 settled it. The credential was unreachable until then:
+#     for an event TRIGGERED by the update bot, `on: pull_request` resolves `secrets.*` from the
+#     DEPENDABOT store, where all six repositories hold nothing, while `pull_request_target`
+#     resolves the ACTIONS store, where five of the six already held this token and the sixth
+#     was given it in the same operation as this edit. Measured on a human-triggered and a
+#     bot-triggered run alike, against a control naming a secret present in neither store. Note
+#     `secrets.GITHUB_TOKEN` still serves the metadata step below: it is synthesized per run
+#     rather than read from either store, so the trigger does not move it.
 #   * THE PINNED ACTION MOVED for four of the six, and that is a second variable in one change,
 #     stated rather than buried. `e849b3a8` and `72391c0f` ran v2; `a4a4b8da` already ran v3.1.0,
 #     and one blob means one pin. Forward rather than back, because the update bot would
@@ -114,7 +131,7 @@ name: Dependabot auto-merge
 #     agree for `docker`, checked against the real branch names rather than assumed. Check any
 #     second exclusion the same way, and note the direction of failure has REVERSED: a wrong
 #     literal used to leave a permission unclaimed, and now leaves an exclusion unenforced.
-on: pull_request
+on: pull_request_target
 
 permissions:
   contents: write
@@ -137,4 +154,4 @@ jobs:
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.FACTORY_PR_TOKEN }}
