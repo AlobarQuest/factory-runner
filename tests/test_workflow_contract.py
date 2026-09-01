@@ -157,7 +157,8 @@ def test_workflow_pins_executable_actions_to_exact_commits() -> None:
     data = yaml.safe_load(Path(".github/workflows/factory-runner.yml").read_text())
     uses = [step.get("uses") for step in data["jobs"]["run"]["steps"] if step.get("uses")]
 
-    assert "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" in uses
+    # actions/checkout v7.0.1 -- refs/tags/v7, reviewed 2026-09-01.
+    assert "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" in uses
     # astral-sh/setup-uv v7.6.0 -- refs/tags/v7 dereferenced, reviewed 2026-09-01.
     assert "astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78" in uses
 
