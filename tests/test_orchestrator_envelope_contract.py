@@ -17,10 +17,19 @@ agent produces the diff and no command mutates a tracked file. Both repos enforc
 predicate; WS-P2.33 exists because they did not, and the byte-identical dependency-update
 fixture stayed green while production disagreed.
 
-The THIRD fixture, `runner_envelope_contract.json`, pins the rules neither envelope can:
-every capability in both of them is declared "allowed", so their bytes are satisfied by a
-one-term level set and say nothing about "prohibited". It also pins this model's declared
-FIELD set, which matters because `extra="forbid"` makes an undeclared key a pydantic crash
+The THIRD fixture, `runner_envelope_contract.json`, is the DECLARATION, where the two above
+are SPECIMENS -- and WS-P3.7 moved the capability names into it for that reason. Every
+capability in both envelopes is declared "allowed", so their bytes are satisfied by a one-term
+level set and say nothing about "prohibited". They also record real dispatched work, which is
+what makes them worth pinning at all: the first is the GAP-4 dependency update, the second the
+first maintenance-remediation pilot. A vocabulary term the factory has never dispatched has no
+honest place in either, and deriving the shipped vocabulary from a specimen forces one in --
+which reds the orchestrator's known-good authority pattern, whose totality rule refuses any
+envelope carrying a capability it did not describe. Twelve tests there measured it. So the
+names live here, and each envelope is asserted to be a SUBSET of them.
+
+This file also pins the LEVEL vocabulary and this model's declared FIELD set. The field set
+matters because `extra="forbid"` makes an undeclared key a pydantic crash
 before `validate_authority` ever runs — and the orchestrator's own `KNOWN_FIELDS` differs
 from it by exactly one member (`unknown_fields`, which that repo emits from `normalized()`
 and this model rejects). Both sides key their gate on THIS file, not on their own
@@ -52,7 +61,7 @@ FIXTURE_EDIT = Path(__file__).resolve().parent / "fixtures" / "runner_authority_
 CONTRACT_SHA256_EDIT = "90b73de69bdd9d5ee88be38b0a0ac2eeff1e4bb467ec72062cd1b70f49888f6e"
 
 FIXTURE_CONTRACT = Path(__file__).resolve().parent / "fixtures" / "runner_envelope_contract.json"
-CONTRACT_SHA256_SURFACE = "c518e3a26a1e0d109ece3ccccaca0bc2fc7a069e26cba470e1f940742a55a1c0"
+CONTRACT_SHA256_SURFACE = "74fe8042d2fc7b907ba6239758e28343071729234080d93e31114004c72a3867"
 
 WORK_UNIT_ID = "8302c75c-e083-5a67-bfd6-63021b90d6da"
 TARGET_REPOSITORY = "AlobarQuest/change-manager"
@@ -69,6 +78,10 @@ def golden_edit_envelope() -> dict[str, Any]:
     return json.loads(FIXTURE_EDIT.read_text())
 
 
+def golden_contract() -> dict[str, list[str]]:
+    return json.loads(FIXTURE_CONTRACT.read_text())
+
+
 def test_golden_envelope_is_unchanged() -> None:
     """A one-sided edit here means the orchestrator's copy has silently drifted."""
     canonical = json.dumps(golden_envelope(), sort_keys=True, separators=(",", ":"))
@@ -81,11 +94,29 @@ def test_golden_edit_envelope_is_unchanged() -> None:
     assert hashlib.sha256(canonical.encode()).hexdigest() == CONTRACT_SHA256_EDIT
 
 
-def test_shipped_vocabulary_matches_the_authority_envelope() -> None:
-    envelope_capabilities = sorted(golden_envelope()["capabilities"])
+def test_shipped_vocabulary_is_derived_from_the_pinned_contract() -> None:
+    """The shipped vocabulary IS the pinned declaration -- not a second hand-maintained copy.
 
-    assert list(CAPABILITY_VOCABULARY["runner"]) == envelope_capabilities
-    assert SUPPORTED_CAPABILITIES == frozenset(envelope_capabilities)
+    It stays a module literal rather than a read of this file because `tests/` is not in the
+    wheel: a shipped vocabulary that loads a fixture works in the suite and fails on the
+    runner. So the literal is what ships and this asserts the two agree, which is the same
+    arrangement the level and field sets already use.
+    """
+    declared = golden_contract()["capabilities"]
+
+    assert list(CAPABILITY_VOCABULARY["runner"]) == sorted(declared)
+    assert SUPPORTED_CAPABILITIES == frozenset(declared)
+
+
+def test_each_golden_envelope_names_only_declared_capabilities() -> None:
+    """A specimen is a SUBSET of the vocabulary, never equal to it.
+
+    Equality here is what forced a capability the factory has never dispatched into a fixture
+    that records what it dispatched. Subset keeps the envelopes honest and still catches the
+    thing that matters -- a real envelope naming something this runner would refuse.
+    """
+    assert frozenset(golden_envelope()["capabilities"]) <= SUPPORTED_CAPABILITIES
+    assert frozenset(golden_edit_envelope()["capabilities"]) <= SUPPORTED_CAPABILITIES
 
 
 def test_runner_accepts_the_orchestrator_envelope() -> None:
@@ -206,8 +237,46 @@ def test_runner_grants_nothing_from_the_orchestrator_only_fields() -> None:
     )
 
 
-def test_golden_capability_levels_are_unchanged() -> None:
-    canonical = json.dumps(json.loads(FIXTURE_CONTRACT.read_text()), sort_keys=True)
+def test_a_merge_grant_derives_no_permission() -> None:
+    """WS-P3.7 Increment 3: the runner RECOGNISES `github.pr.merge` and acts on nothing.
+
+    Declared at "allowed", the strongest form: the weaker reading -- that a prohibition grants
+    nothing -- is true of a name the runner never heard of and proves nothing. The claim worth
+    pinning is that even a GRANT changes no derived permission: the envelope parses, and
+    `validate_authority` returns exactly what it returns without the key.
+
+    Deliberately no `can_merge` field to assert against. WS-P2.16 found `can_create_pr` computed
+    into `RunnerPermissions` and never read -- a permission validated as a name and ignored as a
+    permission -- and adding a second one would be that defect on purpose. So the absence of the
+    field IS the assertion.
+    """
+    payload = golden_edit_envelope()
+    payload["constraints"]["work_unit_id"] = EDIT_WORK_UNIT_ID
+    payload["capabilities"] = {**payload["capabilities"], "github.pr.merge": "allowed"}
+    without = {
+        key: value for key, value in payload["capabilities"].items() if key != "github.pr.merge"
+    }
+
+    granted = validate_authority(
+        AuthorityEnvelope.model_validate(payload),
+        work_unit_id=EDIT_WORK_UNIT_ID,
+        target_repo=EDIT_TARGET_REPOSITORY,
+        current_repo=EDIT_TARGET_REPOSITORY,
+    )
+
+    assert granted == validate_authority(
+        AuthorityEnvelope.model_validate({**payload, "capabilities": without}),
+        work_unit_id=EDIT_WORK_UNIT_ID,
+        target_repo=EDIT_TARGET_REPOSITORY,
+        current_repo=EDIT_TARGET_REPOSITORY,
+    )
+    assert not [field for field in type(granted).model_fields if "merge" in field]
+    assert "github.pr.merge" in SUPPORTED_CAPABILITIES
+
+
+def test_the_pinned_contract_is_unchanged() -> None:
+    """The declaration: capability names, levels, and the model's field set."""
+    canonical = json.dumps(golden_contract(), sort_keys=True)
 
     assert hashlib.sha256(canonical.encode()).hexdigest() == CONTRACT_SHA256_SURFACE
 
@@ -222,7 +291,7 @@ def test_shipped_levels_match_the_pinned_contract() -> None:
     floor under "prohibited" is `test_authority.py::test_maps_prohibited_repo_edit_to_false_
     permission` and the CLI tests — do not delete those on the theory that this pin covers them.
     """
-    assert SUPPORTED_LEVELS == frozenset(json.loads(FIXTURE_CONTRACT.read_text())["levels"])
+    assert SUPPORTED_LEVELS == frozenset(golden_contract()["levels"])
 
 
 def test_declared_envelope_fields_match_the_pinned_contract() -> None:
@@ -233,9 +302,7 @@ def test_declared_envelope_fields_match_the_pinned_contract() -> None:
     in the fail-open direction. Adding or renaming a field on `AuthorityEnvelope` reds this
     until the fixture moves with it, and the orchestrator's copy reds until it does too.
     """
-    assert set(AuthorityEnvelope.model_fields) == set(
-        json.loads(FIXTURE_CONTRACT.read_text())["envelope_fields"]
-    )
+    assert set(AuthorityEnvelope.model_fields) == set(golden_contract()["envelope_fields"])
 
 
 def test_a_normalized_orchestrator_envelope_is_rejected_by_this_model() -> None:

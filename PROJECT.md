@@ -9,11 +9,14 @@ version: 0.1.0
 version_source: pyproject
 updated: '2026-07-31'
 foundation: true
+factory_target: false
+factory_target_reason: ADR-0015 — the runner may not maintain itself; a factory run would
+  verify changes to the runner using a pinned older copy of the runner.
 foundation_contract: 1
 applicable_standards:
   project: '1.0'
   security: '1.0'
-  code: '1.0'
+  code: '1.1'
 required_checks:
 - id: quality
   executor: github-actions:quality.yml:quality
