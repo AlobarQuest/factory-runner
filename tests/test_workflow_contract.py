@@ -159,7 +159,8 @@ def test_workflow_pins_executable_actions_to_exact_commits() -> None:
 
     # actions/checkout v7.0.1 -- refs/tags/v7, reviewed 2026-09-01.
     assert "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" in uses
-    assert "astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86" in uses
+    # astral-sh/setup-uv v7.6.0 -- refs/tags/v7 dereferenced, reviewed 2026-09-01.
+    assert "astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78" in uses
 
 
 def test_workflow_classifies_coding_result_before_finalizing_and_reports_it_as_coding_failure() -> (
