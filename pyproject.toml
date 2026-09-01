@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools>=84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -19,7 +19,7 @@ factory-runner = "factory_runner.cli:app"
 dev = [
   "pytest>=8.0",
   "pyyaml>=6.0",
-  "ruff==0.15.20",
+  "ruff==0.16.4",
   "pyright==1.1.411",
 ]
 
@@ -28,6 +28,10 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
+# ruff 0.16 formats Python code blocks inside Markdown; 0.15 did not. The affected
+# files here are ADRs and historical plan documents — the record, not code — so the
+# formatter is excluded from them rather than allowed to rewrite them.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C90"]
