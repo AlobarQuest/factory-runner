@@ -139,11 +139,27 @@ def test_the_install_and_its_verification_both_derive_from_this_workflows_own_co
 
 
 def test_workflow_pins_executable_actions_to_exact_commits() -> None:
+    """The VALUE is asserted, not the form, and that is the point rather than an oversight.
+
+    This workflow runs a coding agent with a write-capable token inside every factory target, so
+    "which commit of this action executes there" is not a thing a bot may change unattended. A
+    form assertion -- any 40-character SHA -- would keep the tag-versus-SHA property and give up
+    exactly the half doing the work: an update bot moving the pin would then land in silence.
+
+    So an action bump to THIS file reddens here by design, and editing these literals is how the
+    review is recorded. Verify the new SHA is the release it claims before doing so -- note
+    `astral-sh/setup-uv`'s `refs/tags/v7` is an ANNOTATED tag, so it must be dereferenced
+    (`git/tags/<sha>`) and does not appear in a naive ref listing.
+
+    `quality.yml` is deliberately out of scope: it uses mutable tags, runs nothing privileged,
+    and its half of the same bump lands without a human.
+    """
     data = yaml.safe_load(Path(".github/workflows/factory-runner.yml").read_text())
     uses = [step.get("uses") for step in data["jobs"]["run"]["steps"] if step.get("uses")]
 
     assert "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" in uses
-    assert "astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86" in uses
+    # astral-sh/setup-uv v7.6.0 -- refs/tags/v7 dereferenced, reviewed 2026-09-01.
+    assert "astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78" in uses
 
 
 def test_workflow_classifies_coding_result_before_finalizing_and_reports_it_as_coding_failure() -> (
