@@ -99,7 +99,24 @@ jobs:
           # The approved authority envelope carries budgets.max_llm_calls, which the
           # runner does not yet read. Until it does, this literal is the effective
           # budget. 10 exhausted itself on exploration and committed nothing.
-          max_turns: "40"
+          #
+          # 40 -> 60 on 2026-09-03, measured rather than guessed. Four full-length
+          # attempts at a real zod 3->4 migration into infraops-mcp-server all ended
+          # error_max_turns at exactly 40. The first three were mostly waste and were
+          # fixed at the source (a refusal that explained nothing, a prompt that read
+          # as an instruction to re-run the verifier); by the fourth the waste was
+          # gone and the ceiling closed on the agent MID-EDIT on the right file, two
+          # turns from testable. What changed underneath is that the envelope now
+          # names the target repository's own gate, so an attempt must satisfy
+          # eslint, prettier and the test suite rather than the build alone -- same
+          # ceiling, more work.
+          #
+          # RAISING THIS IS COUPLED TO budgets.max_llm_calls, which is
+          # max_attempts x THIS x calls-per-turn (~1.65 measured, rounded to 2). At
+          # 60 that is 3 x 60 x 2 = 360, and intent-packages moves with it. Raising
+          # one alone reproduces the failure that killed a unit permanently: the
+          # UNRECOVERABLE budget gate binding before the recoverable attempt gate.
+          max_turns: "60"
 
       - name: Classify coding result
         id: classify
