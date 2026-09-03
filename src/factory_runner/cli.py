@@ -243,6 +243,13 @@ This list bounds every command you may run. It is not merely a list of checks:
 it contains the mutations this outcome requires. The runner re-executes this
 exact list, in this order, after you finish and before it commits, so each
 command must still succeed when run a second time against the same checkout.
+
+Matching is EXACT string equality. A command with an added flag, a pipe, a
+redirect or an `&&` chain is a DIFFERENT command and will be refused, including
+when the part before the pipe is on this list. Do not use the shell to explore:
+read and search the codebase with the Read, Grep, Glob and LS tools, which need
+no authorization and are not bounded by this list. Every refused command costs
+you a turn and buys nothing.
 {enrichment_section}
 
 Leave your changes UNCOMMITTED in the working tree. The runner creates the

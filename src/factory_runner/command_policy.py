@@ -52,6 +52,27 @@ def write_tool_policy(
     return policy_path, settings_path
 
 
+_BASH_REFUSAL = (
+    "Not authorized. Matching is EXACT - an added flag, pipe, redirect or && makes it a "
+    "different command. To read or search the repo use the Read/Grep/Glob/LS tools; they "
+    "need no authorization."
+)
+"""Say WHY and WHAT INSTEAD, because the agent pays a turn for every refusal.
+
+A bare "Bash command is not authorized" taught nothing, so an agent doing real work
+rediscovered the boundary by trial. Measured 2026-09-03 on a zod 3->4 migration: SEVEN of
+forty turns went on refused shell calls -- every one read-only investigation it could have
+done with the file tools, and it DID switch to them after each refusal, having had to work
+that out again each time. It hit the turn ceiling with the migration complete but unreported.
+
+Deliberately does NOT list the authorized commands, though naming them was the first
+instinct: `test_authorize_tool_cli_denies_with_exit_two_and_bounded_stderr` bounds this
+string under 200 characters and asserts the policy is not echoed into stderr. That bound is
+right and the list is redundant anyway -- the agent already receives it in its prompt. What
+it did not have is the EXACT rule and the pointer to the ungated tools.
+"""
+
+
 def authorize_tool(policy_path: Path, hook_input: Mapping[str, object]) -> tuple[bool, str]:
     """Return an allow decision only for an exact Bash command or contained Edit path."""
     try:
@@ -67,11 +88,9 @@ def authorize_tool(policy_path: Path, hook_input: Mapping[str, object]) -> tuple
         command = tool_input.get("command")
         if not isinstance(command, str):
             return False, "missing Bash command"
-        return (
-            (True, "authorized")
-            if command in policy["allowed_commands"]
-            else (False, "Bash command is not authorized")
-        )
+        if command in policy["allowed_commands"]:
+            return True, "authorized"
+        return False, _BASH_REFUSAL
     if tool_name == "Edit":
         if not policy["edit_allowed"]:
             return False, "Edit is not authorized"
