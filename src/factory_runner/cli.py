@@ -244,6 +244,12 @@ it contains the mutations this outcome requires. The runner re-executes this
 exact list, in this order, after you finish and before it commits, so each
 command must still succeed when run a second time against the same checkout.
 
+THE RUNNER DOES THAT RE-EXECUTION. YOU MUST NOT. Run a command when you need
+its result. Once the work is done and the verifying commands have each passed
+ONCE, stop and say what you changed. Re-running the list to prove it is
+idempotent spends turns on work the runner is about to redo anyway, and a run
+that never stops is reported as a failure however complete the work is.
+
 Matching is EXACT string equality. A command with an added flag, a pipe, a
 redirect or an `&&` chain is a DIFFERENT command and will be refused, including
 when the part before the pipe is on this list. Do not use the shell to explore:

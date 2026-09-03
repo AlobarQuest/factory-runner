@@ -111,3 +111,25 @@ def test_the_prompt_states_the_exact_rule_and_names_the_ungated_tools() -> None:
     for tool in ("Read", "Grep", "Glob", "LS"):
         assert tool in flat
     assert "Every refused command costs you a turn" in flat
+
+
+def test_the_prompt_tells_the_agent_the_runner_does_the_re_execution() -> None:
+    """Measured across BOTH zod attempts: the run ends on bookkeeping, not on the work.
+
+    Attempt 1 spent its last 7 turns re-verifying after a clean build at turn 33; attempt 2 spent
+    its last 10 running the authorized list TWICE after a clean build at turn 30 — turns 35-40
+    are literally `npm ci, grep, npm install, npm run build, npm ci, grep`. Both ended
+    `error_max_turns` with the migration complete and unreported.
+
+    That is not confusion, it is this prompt: it said the runner re-executes the list "so each
+    command must still succeed when run a second time", and the agent read a statement about
+    idempotency as an instruction to demonstrate it. The requirement is kept, because it governs
+    how the agent WRITES a command; what is added is who performs the second run.
+    """
+    prompt = _prompt(_runner_brief(), ("uv sync --locked", "make check"))
+    flat = " ".join(prompt.split())
+
+    assert "THE RUNNER DOES THAT RE-EXECUTION. YOU MUST NOT." in flat
+    assert "passed ONCE, stop" in flat
+    # The idempotency requirement itself must survive: it is why a command may not be one-shot.
+    assert "must still succeed when run a second time" in flat
