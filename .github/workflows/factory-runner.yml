@@ -54,6 +54,31 @@ jobs:
 
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78
 
+      # Node 22, matching what the target repositories' OWN named checks run.
+      #
+      # The workflow pinned nothing here until 2026-09-04 and inherited whatever the
+      # hosted image shipped, which is older. That is not a preference, it decides
+      # whether an envelope can honestly verify its own work: unit a78881e2 finished a
+      # zod 3->4 migration, passed the coding classifier, and died at `finalize-run`
+      # because `npm test` could not BOOT --
+      #     SyntaxError: 'node:util' does not provide an export named 'styleText'
+      # `styleText` landed in Node 22, so vitest failed on the runner and passes in
+      # every one of those repositories' own CI.
+      #
+      # This is also the honest half of the runner-honesty question. `intent-packages`
+      # kept `npm test` on a deny-list because "a bare hosted runner cannot honestly run
+      # it"; Devon ruled on 2026-09-03 that an envelope may name the target repository's
+      # own gate when that gate IS the acceptance criterion. Both are satisfiable at once
+      # by making the runner's environment match the gate rather than forbidding the gate.
+      #
+      # 22 because that is what five of six target repositories pin, measured, and what
+      # infraops-mcp-server's named check uses -- and the NAMED CHECK is what AC-001 is
+      # decided by, so matching it is the version that makes the envelope honest. That
+      # repository also has a workflow on 24; matching the named check is the tie-break.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
       # `job.workflow_*` describes the workflow file defining THIS job — in a reusable
       # workflow that is factory-runner, not the caller (`github.*` is the caller). So the
       # workflow installs its own commit: the caller's pin, this workflow and the installed
