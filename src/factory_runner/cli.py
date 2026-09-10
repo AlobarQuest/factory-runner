@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -125,10 +126,21 @@ def _lease_facts(brief: RunnerBrief) -> dict[str, Any]:
     }
 
 
+_PUSH_TOKEN_VARIABLE = "GITHUB_TOKEN"
+_ORCHESTRATOR_TOKEN_VARIABLE = "FACTORY_RUNNER_TOKEN"
+_RUNNER_CREDENTIAL_VARIABLES = (_PUSH_TOKEN_VARIABLE, _ORCHESTRATOR_TOKEN_VARIABLE)
+"""Every credential the runner itself puts in its own process environment.
+
+Named as a SET rather than one at a time: the finalize step carries two, and a scrub
+that removed only the one this change is about would be a guard that is right about the
+wrong noun.
+"""
+
+
 def _client(orchestrator_url: str, credential_key_id: str) -> OrchestratorClient:
-    token = os.environ.get("FACTORY_RUNNER_TOKEN")
+    token = os.environ.get(_ORCHESTRATOR_TOKEN_VARIABLE)
     if not token:
-        typer.echo("FACTORY_RUNNER_TOKEN environment variable is required", err=True)
+        typer.echo(f"{_ORCHESTRATOR_TOKEN_VARIABLE} environment variable is required", err=True)
         raise typer.Exit(code=1)
     return OrchestratorClient(
         base_url=orchestrator_url,
@@ -320,6 +332,58 @@ def _workspace_exclude_entry(workspace: Path, checkout: Path) -> str:
 _GIT_AUTHOR_NAME = "factory-runner"
 _GIT_AUTHOR_EMAIL = "factory-runner@users.noreply.github.com"
 
+_LOCAL_HEAVY_RUNTIME = "local-heavy"
+_GITHUB_EXTRAHEADER_KEY = "http.https://github.com/.extraheader"
+
+
+def _pushes_with_ambient_credentials(run: Mapping[str, Any]) -> bool:
+    """Whether this lane's push should use the credential the machine already holds.
+
+    Only the local-heavy lane, which runs on an operator's machine where a keychain or
+    `gh` credential helper IS the legitimate credential. Anything else -- including a
+    run.json too old or too damaged to say which lane wrote it -- is treated as hosted,
+    because that is the direction where being wrong is loud: the hosted checkout carries
+    no credential at all, so a bare push is refused by the remote and says so, while a
+    hosted run mistaken for local-heavy would push nothing and blame github.
+    """
+    return run.get("runtime") == _LOCAL_HEAVY_RUNTIME
+
+
+def _git_push_environment(token: str, base_environment: Mapping[str, str]) -> dict[str, str]:
+    """Return `base_environment` plus a github.com credential, for ONE git subprocess.
+
+    `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` add config to a git
+    process's runtime configuration, zero-indexed, overriding config files (git-config(1),
+    "ENVIRONMENT"). That is the only channel here that reaches neither argv -- which `ps`
+    shows to anything else on the runner, and which `_run_command` interpolates into its
+    RuntimeError on failure -- nor a file that outlives the call.
+
+    The header is the one `actions/checkout` builds, so it is authenticating exactly as the
+    persisted credential used to. What changed is lifetime: this exists for the length of
+    one `git push` and in no process the coding agent can read.
+
+    Starting from `base_environment` rather than `{}` is load-bearing: `subprocess.run(env=)`
+    REPLACES the environment, so a bare three-key dict would leave git with no PATH and no
+    HOME.
+    """
+    credential = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    # APPEND at the inherited count rather than writing index 0 and a count of 1: the latter
+    # would silently drop every pair an inherited environment had already put on this channel.
+    # Nothing on a hosted runner uses it today, so this is a latent footgun rather than a live
+    # one -- but an unparseable count is git's error on EVERY git command, so treating it as
+    # zero here can only improve that one push.
+    try:
+        inherited = int(base_environment.get("GIT_CONFIG_COUNT", "") or 0)
+    except ValueError:
+        inherited = 0
+    index = max(inherited, 0)
+    return {
+        **base_environment,
+        "GIT_CONFIG_COUNT": str(index + 1),
+        f"GIT_CONFIG_KEY_{index}": _GITHUB_EXTRAHEADER_KEY,
+        f"GIT_CONFIG_VALUE_{index}": f"AUTHORIZATION: basic {credential}",
+    }
+
 
 def _run_command(command: list[str], **kwargs: Any) -> str:
     completed = subprocess.run(
@@ -340,7 +404,26 @@ def _run_command(command: list[str], **kwargs: Any) -> str:
 
 
 def _verification_environment(repo_root: Path) -> dict[str, str]:
+    """The environment for the verifier commands: the repo's tools, and no credential.
+
+    The verifier re-executes `constraints.allowed_commands` -- `make check`, `npm test` --
+    and those run code the coding agent was authorized to EDIT. `authorize_tool`'s Edit gate
+    permits any path inside the checkout that is not `.git/` or protected runner metadata, so
+    a Makefile recipe, a test script and a test file are all in reach. Inheriting the process
+    environment therefore handed an eight-repository PAT to agent-authored code, by a shorter
+    route than the persisted checkout credential this change removes and one that
+    `persist-credentials: false` does not touch.
+
+    This NARROWS; it does not make the lane hostile-agent-safe, and must not be cited as
+    though it did. The agent still chooses what the verifier executes. What it can no longer
+    do is read a credential straight out of that process's environment.
+
+    Popping from the copy leaves `os.environ` alone, so `_client` still authenticates and the
+    `gh` commands -- which inherit rather than being handed an environment -- are unaffected.
+    """
     environment = os.environ.copy()
+    for variable in _RUNNER_CREDENTIAL_VARIABLES:
+        environment.pop(variable, None)
     venv_bin = repo_root / ".venv" / "bin"
     if venv_bin.is_dir():
         inherited_path = environment.get("PATH")
@@ -828,6 +911,24 @@ def _finalize_workspace(
         typer.echo("workspace work unit mismatch", err=True)
         raise typer.Exit(code=1)
 
+    # Resolved BEFORE the verifier commands, which are the expensive part of this function: a
+    # hosted run whose credential never arrived should cost seconds, not a full `make check`
+    # followed by a refusal at the remote.
+    push_environment: dict[str, str] | None = None
+    if not _pushes_with_ambient_credentials(run):
+        # Stripped, and the stripped value is what is used: a secret that arrived as
+        # whitespace is as absent as one that did not arrive, and should draw the same
+        # named refusal rather than a base64 of nothing that the remote rejects.
+        token = os.environ.get(_PUSH_TOKEN_VARIABLE, "").strip()
+        if not token:
+            typer.echo(
+                f"{_PUSH_TOKEN_VARIABLE} is not set, and the checkout carries no credential "
+                "of its own; the hosted lane must authenticate its push explicitly",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        push_environment = _git_push_environment(token, os.environ)
+
     # Both lanes converge here, and here is the only place that matters: `prepare_run` excludes
     # artifacts for the dispatched lane only, while the `git add -A` below sweeps BOTH. The
     # local-heavy lane therefore reached this line with its workspace -- and the lease token in
@@ -913,7 +1014,9 @@ def _finalize_workspace(
             _commit_message(brief, attempt),
         ]
     )
-    _run_command(["git", "push", "--set-upstream", "origin", branch])
+    # `env=None` inherits, which is what the local-heavy lane wants and what every other
+    # command here gets. The hosted lane is the only caller that hands git a credential.
+    _run_command(["git", "push", "--set-upstream", "origin", branch], env=push_environment)
     head_sha = _run_command(["git", "rev-parse", "HEAD"]).strip()
     pr_url = _run_command(
         [

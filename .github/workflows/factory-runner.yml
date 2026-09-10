@@ -46,10 +46,36 @@ jobs:
       WORK_UNIT_ID: ${{ inputs.work_unit_id }}
       CURRENT_REPOSITORY: ${{ github.repository }}
     steps:
+      # `persist-credentials: false` because the coding phase must get a checkout carrying
+      # no credential. At v7.0.1 a persisted token does not sit in `.git/config` itself --
+      # it goes to `$RUNNER_TEMP/git-credentials-<uuid>.config`, which `.git/config` then
+      # names in an `includeIf.gitdir:` entry. That is two files rather than one and no
+      # more protected: the runner-owned PreToolUse hook covers Bash and Edit only, so
+      # `Read` reaches both, and the refusal text points the agent at `Read` by name. The
+      # Edit gate already refuses paths inside `.git/`, which identified that directory as
+      # sensitive and then guarded only writing to it.
+      #
+      # FACTORY_PR_TOKEN is a fine-grained PAT with write access to eight repositories, so
+      # the blast radius was every repository in the estate rather than this one.
+      #
+      # `token:` stays -- checkout still needs it to fetch, and it is a PR-author identity
+      # so pushes and PRs trigger the target repo's CI (unlike GITHUB_TOKEN). What changes
+      # is lifetime: `removeAuth()` runs in checkout's own `finally`, deleting the
+      # credentials file and the includeIf entries before any later step runs. The push in
+      # `finalize-run` therefore authenticates for itself, from GITHUB_TOKEN on that step
+      # below -- a different step, so the coding action's process never holds it. Both
+      # halves must move together; neither works alone.
+      #
+      # Be precise about what that does and does not close, because the loose version of
+      # the sentence above ("the agent's process never holds it") is false and would be
+      # inherited as fact. The FINALIZE step does hold it, and it re-executes the
+      # envelope's verifier commands -- whose code the agent was authorized to edit. So
+      # `_verification_environment` scrubs the runner's own credentials before running
+      # them. That narrows the route; it does not make this lane hostile-agent-safe, which
+      # it is documented not to be. The agent still chooses what the verifier executes.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          persist-credentials: true
-          # PR-author identity so pushes/PRs trigger target-repo CI (not gated like GITHUB_TOKEN)
+          persist-credentials: false
           token: ${{ secrets.FACTORY_PR_TOKEN }}
 
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78

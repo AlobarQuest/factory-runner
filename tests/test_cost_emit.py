@@ -143,7 +143,7 @@ def test_finalize_run_emits_cost_actuals_before_submit(
             "--execution-file",
             str(execution_file),
         ],
-        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token", "GITHUB_TOKEN": "push-token-redacted"},
     )
 
     assert result.exit_code == 0, result.output
@@ -189,7 +189,7 @@ def test_finalize_run_emits_unknown_cost_without_execution_file(
             "--workspace-dir",
             str(tmp_path),
         ],
-        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token", "GITHUB_TOKEN": "push-token-redacted"},
     )
 
     assert result.exit_code == 0, result.output
@@ -229,7 +229,7 @@ def test_finalize_run_emits_unknown_cost_when_execution_file_missing(
             "--execution-file",
             str(tmp_path / "does-not-exist.jsonl"),
         ],
-        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token", "GITHUB_TOKEN": "push-token-redacted"},
     )
 
     assert result.exit_code == 0, result.output
@@ -401,7 +401,7 @@ def test_finalize_run_continues_when_cost_actuals_emit_fails(
             "--execution-file",
             str(execution_file),
         ],
-        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token", "GITHUB_TOKEN": "push-token-redacted"},
     )
 
     assert result.exit_code == 0, result.output

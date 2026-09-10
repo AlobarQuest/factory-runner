@@ -115,7 +115,7 @@ def _run_finalize(tmp_path: Path) -> Result:
             "--workspace-dir",
             str(tmp_path),
         ],
-        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token", "GITHUB_TOKEN": "push-token-redacted"},
     )
 
 

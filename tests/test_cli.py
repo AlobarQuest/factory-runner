@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 from pathlib import Path
@@ -619,7 +620,7 @@ def test_finalize_replays_refreshed_commands_in_order_with_bash_argv(
             "--workspace-dir",
             str(tmp_path),
         ],
-        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token", "GITHUB_TOKEN": "push-token-redacted"},
     )
 
     assert result.exit_code == 0, result.output
@@ -671,7 +672,7 @@ def test_finalize_stops_before_commands_when_refreshed_authority_changes(
             "--workspace-dir",
             str(tmp_path),
         ],
-        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token", "GITHUB_TOKEN": "push-token-redacted"},
     )
 
     assert result.exit_code == 1
@@ -835,7 +836,7 @@ def test_finalize_run_commits_pr_evidence_and_submits(
                 "--workspace-dir",
                 str(tmp_path),
             ],
-            env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+            env={"FACTORY_RUNNER_TOKEN": "redacted-token", "GITHUB_TOKEN": "push-token-redacted"},
         )
     finally:
         cli_module.OrchestratorClient = original_client
@@ -846,8 +847,15 @@ def test_finalize_run_commits_pr_evidence_and_submits(
     verification_environment = cast("dict[str, str]", verification_call[1]["env"])
     expected_path = f"{venv_bin}:/usr/bin:/bin" if venv_exists else "/usr/bin:/bin"
     assert verification_environment["PATH"] == expected_path
+    # Exactly two commands are handed an environment: the verifier, for the `.venv/bin` PATH
+    # prepend, and the push, for its credential. Everything else must inherit -- an
+    # environment appearing anywhere else is a credential or a PATH reaching a command that
+    # was never meant to have one.
+    push_command = ["git", "push", "--set-upstream", "origin", "sds/unit-1-attempt-1"]
     assert all(
-        "env" not in kwargs for command, kwargs in run_calls if command != verification_call[0]
+        kwargs.get("env") is None
+        for command, kwargs in run_calls
+        if command not in (verification_call[0], push_command)
     )
     run_commands = [item for name, item in calls if name == "run"]
     assert [
@@ -996,7 +1004,7 @@ def test_finalize_refuses_prohibited_capabilities_before_push_pr_or_evidence(
             "--workspace-dir",
             str(tmp_path),
         ],
-        env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token", "GITHUB_TOKEN": "push-token-redacted"},
     )
 
     assert result.exit_code == 1
@@ -1086,7 +1094,7 @@ def test_finalize_run_supersedes_when_prior_evidence_exists(tmp_path: Path) -> N
                 "--workspace-dir",
                 str(tmp_path),
             ],
-            env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+            env={"FACTORY_RUNNER_TOKEN": "redacted-token", "GITHUB_TOKEN": "push-token-redacted"},
         )
     finally:
         cli_module.OrchestratorClient = original_client
@@ -1853,7 +1861,7 @@ def test_commit_carries_an_explicit_git_identity(tmp_path: Path) -> None:
                 "--workspace-dir",
                 str(tmp_path),
             ],
-            env={"FACTORY_RUNNER_TOKEN": "token"},
+            env={"FACTORY_RUNNER_TOKEN": "token", "GITHUB_TOKEN": "push-token-redacted"},
         )
     finally:
         cli_module.OrchestratorClient = original_client
@@ -1997,7 +2005,7 @@ def _finalize_with_clean_tree(tmp_path: Path, *, base_sha: str | None, head_sha:
                 "--workspace-dir",
                 str(tmp_path),
             ],
-            env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+            env={"FACTORY_RUNNER_TOKEN": "redacted-token", "GITHUB_TOKEN": "push-token-redacted"},
         )
     finally:
         cli_module.OrchestratorClient = original_client
@@ -2048,3 +2056,357 @@ def test_prompt_forbids_committing_and_states_the_runner_contract() -> None:
     assert "Authorized commands, in order:" in prompt
     assert "re-executes this" in prompt
     assert "uv lock --upgrade" in prompt
+
+
+def _finalize_recording_subprocess(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    runtime: str | None,
+    command: str,
+    invoke_env: dict[str, str],
+) -> tuple[Any, list[tuple[list[str], dict[str, Any]]]]:
+    """Drive a finalize far enough to push, recording every subprocess call WITH its kwargs.
+
+    The existing finalize harnesses drop `**kwargs`, so nothing they assert can see which
+    command was handed an environment -- which is the whole subject here.
+    """
+    brief = _runner_brief()
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "brief.json").write_text(brief.model_dump_json())
+    manifest: dict[str, object] = {
+        "attempt": 1,
+        "claim_id": "claim-1",
+        "context_snapshot_id": "snapshot-1",
+        "lease_token": "lease-redacted",
+        "package_revision_id": "rev-1",
+        "submit_expected_version": 5,
+        "work_unit_id": "unit-1",
+        **_finalization_authority(tmp_path, brief),
+    }
+    if runtime is not None:
+        manifest["runtime"] = runtime
+    (tmp_path / "run.json").write_text(json.dumps(manifest))
+
+    run_calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    class FakeClient:
+        def __init__(self, *, base_url: str, credential_key_id: str, token: str) -> None: ...
+
+        def get_runner_brief(self, _unit_id: str) -> RunnerBrief:
+            return brief
+
+        def list_evidence(self, _unit_id: str) -> list[dict[str, object]]:
+            return []
+
+        def pr_binding(self, _unit_id: str, **payload: object) -> dict[str, object]:
+            return {"pr_number": payload["pr_number"]}
+
+        def get_evidence_pack_markdown(self, _unit_id: str) -> str:
+            return "# Evidence Pack\n"
+
+        def submit_evidence(self, _unit_id: str, _payload: dict[str, object]) -> dict[str, object]:
+            return {"id": "evidence-1"}
+
+        def cost_actuals(self, _unit_id: str, **_payload: object) -> dict[str, object]:
+            return {}
+
+        def submit(self, unit_id: str, _payload: dict[str, object]) -> dict[str, object]:
+            return {"unit_id": unit_id, "state": "submitted", "version": 6}
+
+    def fake_run(command: list[str], **kwargs: Any) -> str:
+        run_calls.append((command, kwargs))
+        if command[:3] == ["git", "status", "--porcelain"]:
+            return " M src/example.py\n"
+        if command[:3] == ["git", "rev-parse", "HEAD"]:
+            return "abc123\n"
+        if command[:3] == ["gh", "pr", "create"]:
+            return "https://github.com/AlobarQuest/orchestrator/pull/99\n"
+        if command[:3] == ["gh", "pr", "view"]:
+            return "99\n"
+        return ""
+
+    from factory_runner import cli as cli_module
+
+    original_client = cli_module.OrchestratorClient
+    original_run = cli_module._run_command
+    cli_module.OrchestratorClient = FakeClient
+    cli_module._run_command = fake_run
+    try:
+        result = CliRunner().invoke(
+            app,
+            [
+                command,
+                "--orchestrator-url",
+                "https://sds.alobar.net",
+                "--credential-key-id",
+                "factory-runner-github",
+                "--work-unit-id",
+                "unit-1",
+                "--workspace-dir",
+                str(tmp_path),
+            ],
+            env=invoke_env,
+        )
+    finally:
+        cli_module.OrchestratorClient = original_client
+        cli_module._run_command = original_run
+    return result, run_calls
+
+
+def test_the_push_credential_environment_is_exactly_gits_documented_config_channel() -> None:
+    """`GIT_CONFIG_COUNT`/`_KEY_<n>`/`_VALUE_<n>` is the one channel that is neither argv nor file.
+
+    git-config(1), "ENVIRONMENT": the pairs are added to the process's runtime configuration,
+    zero-indexed, and override configuration files. Argv is visible in `ps` to anything else on
+    the runner AND is interpolated into `_run_command`'s RuntimeError on failure; a file
+    outlives the call and is what this change exists to stop writing.
+
+    Starting from the caller's environment is not incidental -- `subprocess.run(env=)` REPLACES
+    the environment, so a bare three-key dict leaves git with no PATH and no HOME.
+    """
+    from factory_runner import cli as cli_module
+
+    environment = cli_module._git_push_environment(
+        "push-token-redacted", {"PATH": "/usr/bin:/bin", "HOME": "/home/runner"}
+    )
+
+    expected = base64.b64encode(b"x-access-token:push-token-redacted").decode()
+    assert environment["GIT_CONFIG_COUNT"] == "1"
+    assert environment["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
+    assert environment["GIT_CONFIG_VALUE_0"] == f"AUTHORIZATION: basic {expected}"
+    # The inherited environment survives, or git runs with no PATH and no HOME.
+    assert environment["PATH"] == "/usr/bin:/bin"
+    assert environment["HOME"] == "/home/runner"
+
+
+def test_the_hosted_push_authenticates_from_the_environment_not_from_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half of `persist-credentials: false`, and the pin on how it is carried.
+
+    Neither the token nor its base64 form may reach argv: `ps` shows argv to every other
+    process on the runner, and `_run_command` joins argv into the RuntimeError it raises on
+    failure, so an argv-carried credential would be printed by the first push that failed.
+    """
+    result, run_calls = _finalize_recording_subprocess(
+        tmp_path,
+        monkeypatch,
+        runtime="github-hosted",
+        command="finalize-run",
+        invoke_env={
+            "FACTORY_RUNNER_TOKEN": "redacted-token",
+            "GITHUB_TOKEN": "push-token-redacted",
+        },
+    )
+
+    assert result.exit_code == 0, result.output
+    encoded = base64.b64encode(b"x-access-token:push-token-redacted").decode()
+    push = next(call for call in run_calls if call[0][:2] == ["git", "push"])
+    assert push[1]["env"]["GIT_CONFIG_VALUE_0"] == f"AUTHORIZATION: basic {encoded}"
+    # The credential reaches exactly one command, and reaches it only through the environment.
+    for command, kwargs in run_calls:
+        argv = " ".join(command)
+        assert "push-token-redacted" not in argv
+        assert encoded not in argv
+        if command[:2] != ["git", "push"]:
+            # Both forms, and against the ENVIRONMENT as well as argv. Checking only the
+            # base64 form here let the verifier -- which runs agent-authored code -- carry
+            # the raw token and still pass.
+            assert encoded not in json.dumps(kwargs.get("env") or {})
+            assert "push-token-redacted" not in json.dumps(kwargs.get("env") or {})
+    assert "push-token-redacted" not in result.output
+    assert encoded not in result.output
+
+
+def test_the_local_heavy_push_keeps_using_the_machines_own_credential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """local-heavy runs on an operator's machine, where the keychain or `gh` helper IS the
+    credential. It never had a persisted checkout credential to lose, so requiring an explicit
+    one would break a working lane to fix a problem it does not have."""
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    result, run_calls = _finalize_recording_subprocess(
+        tmp_path,
+        monkeypatch,
+        runtime="local-heavy",
+        command="local-heavy-finalize",
+        invoke_env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+    )
+
+    assert result.exit_code == 0, result.output
+    push = next(call for call in run_calls if call[0][:2] == ["git", "push"])
+    assert push[1]["env"] is None
+
+
+@pytest.mark.parametrize("runtime", ["github-hosted", None])
+def test_a_hosted_finalize_without_a_push_credential_refuses_before_running_the_verifier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, runtime: str | None
+) -> None:
+    """A named refusal, raised before the expensive part, and fail-closed on an unnamed lane.
+
+    Without the check the push would be attempted with no credential at all and fail at the
+    remote with `could not read Username for 'https://github.com'` -- after a full verifier
+    run, and blaming github for a secret that never arrived.
+
+    `runtime=None` stands for a run.json too old or too damaged to say which lane wrote it.
+    Treating it as hosted is the direction where being wrong is loud: a local-heavy run
+    misread as hosted refuses by name and an operator can set the variable, while a hosted run
+    misread as local-heavy pushes nothing and blames the remote.
+    """
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    result, run_calls = _finalize_recording_subprocess(
+        tmp_path,
+        monkeypatch,
+        runtime=runtime,
+        command="finalize-run",
+        invoke_env={"FACTORY_RUNNER_TOKEN": "redacted-token"},
+    )
+
+    assert result.exit_code == 1
+    assert "GITHUB_TOKEN is not set" in result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    # Before the verifier, not after it: the check is worth nothing if it costs a `make check`.
+    assert run_calls == []
+
+
+def test_a_failing_push_reports_its_output_without_disclosing_the_credential() -> None:
+    """`_run_command` joins argv and stdout into its RuntimeError, by design -- a `gh pr create`
+    failure used to reach the log as a bare CalledProcessError. The credential lives in the
+    environment precisely so that this message cannot carry it."""
+    from factory_runner import cli as cli_module
+
+    with pytest.raises(RuntimeError) as excinfo:
+        cli_module._run_command(
+            ["sh", "-c", "echo remote-rejected >&2; exit 128"],
+            env={**os.environ, "GIT_CONFIG_VALUE_0": "AUTHORIZATION: basic dG9wLXNlY3JldA=="},
+        )
+
+    assert "remote-rejected" in str(excinfo.value)
+    assert "dG9wLXNlY3JldA==" not in str(excinfo.value)
+    assert "AUTHORIZATION" not in str(excinfo.value)
+
+
+def test_a_whitespace_push_credential_is_treated_as_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A secret that arrived as whitespace is as absent as one that never arrived.
+
+    Untreated it base64s to a well-formed header carrying nothing, which the remote rejects
+    after the whole verifier has run -- the confusing-failure-at-the-remote this check exists
+    to replace, reached by a slightly different route.
+    """
+    result, run_calls = _finalize_recording_subprocess(
+        tmp_path,
+        monkeypatch,
+        runtime="github-hosted",
+        command="finalize-run",
+        invoke_env={"FACTORY_RUNNER_TOKEN": "redacted-token", "GITHUB_TOKEN": "   \n"},
+    )
+
+    assert result.exit_code == 1
+    assert "GITHUB_TOKEN is not set" in result.output
+    assert run_calls == []
+
+
+def test_the_verifier_runs_with_no_runner_credential_in_its_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The verifier re-executes commands whose code the agent was authorized to EDIT.
+
+    `authorize_tool`'s Edit gate permits any path in the checkout that is not `.git/` or
+    protected runner metadata, so a Makefile recipe, a package.json test script and a test
+    file are all in reach. A verifier inheriting the process environment therefore handed an
+    eight-repository PAT to agent-authored code -- a shorter route than the persisted
+    checkout credential, and one `persist-credentials: false` does not touch.
+
+    BOTH are asserted, not just the push token: the finalize step carries two credentials,
+    and a scrub that removed only the one this change is about would be right about the wrong
+    noun.
+    """
+    monkeypatch.setenv("FACTORY_RUNNER_TOKEN", "m2m-redacted")
+
+    _result, run_calls = _finalize_recording_subprocess(
+        tmp_path,
+        monkeypatch,
+        runtime="github-hosted",
+        command="finalize-run",
+        invoke_env={
+            "FACTORY_RUNNER_TOKEN": "m2m-redacted",
+            "GITHUB_TOKEN": "push-token-redacted",
+        },
+    )
+
+    verifier = next(call for call in run_calls if call[0][-1] == "make check")
+    environment = cast("dict[str, str]", verifier[1]["env"])
+    assert "GITHUB_TOKEN" not in environment
+    assert "FACTORY_RUNNER_TOKEN" not in environment
+    assert "PATH" in environment
+
+
+def test_the_push_credential_appends_to_an_inherited_git_config_channel(tmp_path: Path) -> None:
+    """Writing index 0 with a count of 1 would silently drop pairs already on the channel.
+
+    Latent rather than live -- nothing on a hosted runner sets these -- but the fail-safe
+    form costs nothing and the failure it prevents is invisible.
+    """
+    from factory_runner import cli as cli_module
+
+    environment = cli_module._git_push_environment(
+        "push-token-redacted",
+        {
+            "GIT_CONFIG_COUNT": "2",
+            "GIT_CONFIG_KEY_0": "core.autocrlf",
+            "GIT_CONFIG_VALUE_0": "false",
+            "GIT_CONFIG_KEY_1": "gc.auto",
+            "GIT_CONFIG_VALUE_1": "0",
+        },
+    )
+
+    assert environment["GIT_CONFIG_COUNT"] == "3"
+    assert environment["GIT_CONFIG_KEY_2"] == "http.https://github.com/.extraheader"
+    assert "AUTHORIZATION: basic " in environment["GIT_CONFIG_VALUE_2"]
+    # The inherited pairs survive, which is the whole point.
+    assert environment["GIT_CONFIG_KEY_0"] == "core.autocrlf"
+    assert environment["GIT_CONFIG_KEY_1"] == "gc.auto"
+
+
+def test_an_unparseable_inherited_config_count_does_not_crash_the_push(tmp_path: Path) -> None:
+    """git rejects a bogus count on every command, so treating it as zero can only help."""
+    from factory_runner import cli as cli_module
+
+    environment = cli_module._git_push_environment(
+        "push-token-redacted", {"GIT_CONFIG_COUNT": "not-a-number"}
+    )
+
+    assert environment["GIT_CONFIG_COUNT"] == "1"
+    assert environment["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
+
+
+def test_scrubbing_the_verifier_environment_leaves_the_process_environment_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scrub must take from the COPY, or it disarms the runner's own credentials.
+
+    `_client` reads `FACTORY_RUNNER_TOKEN` from `os.environ` and the `gh` commands inherit
+    rather than being handed an environment, so a scrub reaching `os.environ` would break
+    evidence submission and `gh pr create` -- after the push, with the branch already up.
+
+    Asserted here rather than through the finalize harness because `CliRunner.invoke`
+    restores `os.environ` when it returns, so the same assertion made after an invocation
+    passes whether or not the scrub was confined to the copy. It measured the test runner's
+    teardown, not the code.
+    """
+    from factory_runner import cli as cli_module
+
+    monkeypatch.setenv("FACTORY_RUNNER_TOKEN", "m2m-redacted")
+    monkeypatch.setenv("GITHUB_TOKEN", "push-token-redacted")
+
+    environment = cli_module._verification_environment(Path("."))
+
+    assert "FACTORY_RUNNER_TOKEN" not in environment
+    assert "GITHUB_TOKEN" not in environment
+    assert os.environ["FACTORY_RUNNER_TOKEN"] == "m2m-redacted"
+    assert os.environ["GITHUB_TOKEN"] == "push-token-redacted"
