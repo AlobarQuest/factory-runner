@@ -126,10 +126,21 @@ def _lease_facts(brief: RunnerBrief) -> dict[str, Any]:
     }
 
 
+_PUSH_TOKEN_VARIABLE = "GITHUB_TOKEN"
+_ORCHESTRATOR_TOKEN_VARIABLE = "FACTORY_RUNNER_TOKEN"
+_RUNNER_CREDENTIAL_VARIABLES = (_PUSH_TOKEN_VARIABLE, _ORCHESTRATOR_TOKEN_VARIABLE)
+"""Every credential the runner itself puts in its own process environment.
+
+Named as a SET rather than one at a time: the finalize step carries two, and a scrub
+that removed only the one this change is about would be a guard that is right about the
+wrong noun.
+"""
+
+
 def _client(orchestrator_url: str, credential_key_id: str) -> OrchestratorClient:
-    token = os.environ.get("FACTORY_RUNNER_TOKEN")
+    token = os.environ.get(_ORCHESTRATOR_TOKEN_VARIABLE)
     if not token:
-        typer.echo("FACTORY_RUNNER_TOKEN environment variable is required", err=True)
+        typer.echo(f"{_ORCHESTRATOR_TOKEN_VARIABLE} environment variable is required", err=True)
         raise typer.Exit(code=1)
     return OrchestratorClient(
         base_url=orchestrator_url,
@@ -322,7 +333,6 @@ _GIT_AUTHOR_NAME = "factory-runner"
 _GIT_AUTHOR_EMAIL = "factory-runner@users.noreply.github.com"
 
 _LOCAL_HEAVY_RUNTIME = "local-heavy"
-_PUSH_TOKEN_VARIABLE = "GITHUB_TOKEN"
 _GITHUB_EXTRAHEADER_KEY = "http.https://github.com/.extraheader"
 
 
@@ -357,11 +367,21 @@ def _git_push_environment(token: str, base_environment: Mapping[str, str]) -> di
     HOME.
     """
     credential = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    # APPEND at the inherited count rather than writing index 0 and a count of 1: the latter
+    # would silently drop every pair an inherited environment had already put on this channel.
+    # Nothing on a hosted runner uses it today, so this is a latent footgun rather than a live
+    # one -- but an unparseable count is git's error on EVERY git command, so treating it as
+    # zero here can only improve that one push.
+    try:
+        inherited = int(base_environment.get("GIT_CONFIG_COUNT", "") or 0)
+    except ValueError:
+        inherited = 0
+    index = max(inherited, 0)
     return {
         **base_environment,
-        "GIT_CONFIG_COUNT": "1",
-        "GIT_CONFIG_KEY_0": _GITHUB_EXTRAHEADER_KEY,
-        "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {credential}",
+        "GIT_CONFIG_COUNT": str(index + 1),
+        f"GIT_CONFIG_KEY_{index}": _GITHUB_EXTRAHEADER_KEY,
+        f"GIT_CONFIG_VALUE_{index}": f"AUTHORIZATION: basic {credential}",
     }
 
 
@@ -384,7 +404,26 @@ def _run_command(command: list[str], **kwargs: Any) -> str:
 
 
 def _verification_environment(repo_root: Path) -> dict[str, str]:
+    """The environment for the verifier commands: the repo's tools, and no credential.
+
+    The verifier re-executes `constraints.allowed_commands` -- `make check`, `npm test` --
+    and those run code the coding agent was authorized to EDIT. `authorize_tool`'s Edit gate
+    permits any path inside the checkout that is not `.git/` or protected runner metadata, so
+    a Makefile recipe, a test script and a test file are all in reach. Inheriting the process
+    environment therefore handed an eight-repository PAT to agent-authored code, by a shorter
+    route than the persisted checkout credential this change removes and one that
+    `persist-credentials: false` does not touch.
+
+    This NARROWS; it does not make the lane hostile-agent-safe, and must not be cited as
+    though it did. The agent still chooses what the verifier executes. What it can no longer
+    do is read a credential straight out of that process's environment.
+
+    Popping from the copy leaves `os.environ` alone, so `_client` still authenticates and the
+    `gh` commands -- which inherit rather than being handed an environment -- are unaffected.
+    """
     environment = os.environ.copy()
+    for variable in _RUNNER_CREDENTIAL_VARIABLES:
+        environment.pop(variable, None)
     venv_bin = repo_root / ".venv" / "bin"
     if venv_bin.is_dir():
         inherited_path = environment.get("PATH")

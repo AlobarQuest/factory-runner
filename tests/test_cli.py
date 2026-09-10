@@ -2210,7 +2210,11 @@ def test_the_hosted_push_authenticates_from_the_environment_not_from_argv(
         assert "push-token-redacted" not in argv
         assert encoded not in argv
         if command[:2] != ["git", "push"]:
+            # Both forms, and against the ENVIRONMENT as well as argv. Checking only the
+            # base64 form here let the verifier -- which runs agent-authored code -- carry
+            # the raw token and still pass.
             assert encoded not in json.dumps(kwargs.get("env") or {})
+            assert "push-token-redacted" not in json.dumps(kwargs.get("env") or {})
     assert "push-token-redacted" not in result.output
     assert encoded not in result.output
 
@@ -2305,3 +2309,79 @@ def test_a_whitespace_push_credential_is_treated_as_absent(
     assert result.exit_code == 1
     assert "GITHUB_TOKEN is not set" in result.output
     assert run_calls == []
+
+
+def test_the_verifier_runs_with_no_runner_credential_in_its_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The verifier re-executes commands whose code the agent was authorized to EDIT.
+
+    `authorize_tool`'s Edit gate permits any path in the checkout that is not `.git/` or
+    protected runner metadata, so a Makefile recipe, a package.json test script and a test
+    file are all in reach. A verifier inheriting the process environment therefore handed an
+    eight-repository PAT to agent-authored code -- a shorter route than the persisted
+    checkout credential, and one `persist-credentials: false` does not touch.
+
+    BOTH are asserted, not just the push token: the finalize step carries two credentials,
+    and a scrub that removed only the one this change is about would be right about the wrong
+    noun.
+    """
+    monkeypatch.setenv("FACTORY_RUNNER_TOKEN", "m2m-redacted")
+
+    _result, run_calls = _finalize_recording_subprocess(
+        tmp_path,
+        monkeypatch,
+        runtime="github-hosted",
+        command="finalize-run",
+        invoke_env={
+            "FACTORY_RUNNER_TOKEN": "m2m-redacted",
+            "GITHUB_TOKEN": "push-token-redacted",
+        },
+    )
+
+    verifier = next(call for call in run_calls if call[0][-1] == "make check")
+    environment = cast("dict[str, str]", verifier[1]["env"])
+    assert "GITHUB_TOKEN" not in environment
+    assert "FACTORY_RUNNER_TOKEN" not in environment
+    # Scrubbed from the COPY only -- the client and the `gh` commands still authenticate.
+    assert os.environ["FACTORY_RUNNER_TOKEN"] == "m2m-redacted"
+    assert "PATH" in environment
+
+
+def test_the_push_credential_appends_to_an_inherited_git_config_channel(tmp_path: Path) -> None:
+    """Writing index 0 with a count of 1 would silently drop pairs already on the channel.
+
+    Latent rather than live -- nothing on a hosted runner sets these -- but the fail-safe
+    form costs nothing and the failure it prevents is invisible.
+    """
+    from factory_runner import cli as cli_module
+
+    environment = cli_module._git_push_environment(
+        "push-token-redacted",
+        {
+            "GIT_CONFIG_COUNT": "2",
+            "GIT_CONFIG_KEY_0": "core.autocrlf",
+            "GIT_CONFIG_VALUE_0": "false",
+            "GIT_CONFIG_KEY_1": "gc.auto",
+            "GIT_CONFIG_VALUE_1": "0",
+        },
+    )
+
+    assert environment["GIT_CONFIG_COUNT"] == "3"
+    assert environment["GIT_CONFIG_KEY_2"] == "http.https://github.com/.extraheader"
+    assert "AUTHORIZATION: basic " in environment["GIT_CONFIG_VALUE_2"]
+    # The inherited pairs survive, which is the whole point.
+    assert environment["GIT_CONFIG_KEY_0"] == "core.autocrlf"
+    assert environment["GIT_CONFIG_KEY_1"] == "gc.auto"
+
+
+def test_an_unparseable_inherited_config_count_does_not_crash_the_push(tmp_path: Path) -> None:
+    """git rejects a bogus count on every command, so treating it as zero can only help."""
+    from factory_runner import cli as cli_module
+
+    environment = cli_module._git_push_environment(
+        "push-token-redacted", {"GIT_CONFIG_COUNT": "not-a-number"}
+    )
+
+    assert environment["GIT_CONFIG_COUNT"] == "1"
+    assert environment["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"

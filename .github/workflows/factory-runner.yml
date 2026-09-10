@@ -63,8 +63,16 @@ jobs:
       # is lifetime: `removeAuth()` runs in checkout's own `finally`, deleting the
       # credentials file and the includeIf entries before any later step runs. The push in
       # `finalize-run` therefore authenticates for itself, from GITHUB_TOKEN on that step
-      # below -- a different step, so the agent's process never holds it. Both halves must
-      # move together; neither works alone.
+      # below -- a different step, so the coding action's process never holds it. Both
+      # halves must move together; neither works alone.
+      #
+      # Be precise about what that does and does not close, because the loose version of
+      # the sentence above ("the agent's process never holds it") is false and would be
+      # inherited as fact. The FINALIZE step does hold it, and it re-executes the
+      # envelope's verifier commands -- whose code the agent was authorized to edit. So
+      # `_verification_environment` scrubs the runner's own credentials before running
+      # them. That narrows the route; it does not make this lane hostile-agent-safe, which
+      # it is documented not to be. The agent still chooses what the verifier executes.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
