@@ -877,7 +877,10 @@ def _finalize_workspace(
     # followed by a refusal at the remote.
     push_environment: dict[str, str] | None = None
     if not _pushes_with_ambient_credentials(run):
-        token = os.environ.get(_PUSH_TOKEN_VARIABLE, "")
+        # Stripped, and the stripped value is what is used: a secret that arrived as
+        # whitespace is as absent as one that did not arrive, and should draw the same
+        # named refusal rather than a base64 of nothing that the remote rejects.
+        token = os.environ.get(_PUSH_TOKEN_VARIABLE, "").strip()
         if not token:
             typer.echo(
                 f"{_PUSH_TOKEN_VARIABLE} is not set, and the checkout carries no credential "

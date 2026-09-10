@@ -2283,3 +2283,25 @@ def test_a_failing_push_reports_its_output_without_disclosing_the_credential() -
     assert "remote-rejected" in str(excinfo.value)
     assert "dG9wLXNlY3JldA==" not in str(excinfo.value)
     assert "AUTHORIZATION" not in str(excinfo.value)
+
+
+def test_a_whitespace_push_credential_is_treated_as_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A secret that arrived as whitespace is as absent as one that never arrived.
+
+    Untreated it base64s to a well-formed header carrying nothing, which the remote rejects
+    after the whole verifier has run -- the confusing-failure-at-the-remote this check exists
+    to replace, reached by a slightly different route.
+    """
+    result, run_calls = _finalize_recording_subprocess(
+        tmp_path,
+        monkeypatch,
+        runtime="github-hosted",
+        command="finalize-run",
+        invoke_env={"FACTORY_RUNNER_TOKEN": "redacted-token", "GITHUB_TOKEN": "   \n"},
+    )
+
+    assert result.exit_code == 1
+    assert "GITHUB_TOKEN is not set" in result.output
+    assert run_calls == []
