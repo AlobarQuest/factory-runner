@@ -339,3 +339,44 @@ def test_the_invocation_guard_rejects_what_the_cli_does_not_accept() -> None:
     assert _invocations_the_cli_would_reject(bogus_subcommand) == [
         "no such subcommand: factory-runner prepare-the-run"
     ]
+
+
+def test_the_checkout_persists_no_credential_into_the_coding_phase() -> None:
+    """A persisted push token is readable by the coding agent for the whole coding phase.
+
+    At `actions/checkout` v7.0.1 the token does not land in `.git/config` itself; it goes to
+    `$RUNNER_TEMP/git-credentials-<uuid>.config` and `.git/config` names that file in an
+    `includeIf.gitdir:` entry. Two files, neither protected: the runner-owned PreToolUse hook
+    registers `Bash` and `Edit` only (`command_policy.write_tool_policy`), so `Read` reaches
+    both -- and `_BASH_REFUSAL` points the agent at `Read` by name. `FACTORY_PR_TOKEN` is a
+    fine-grained PAT with write access to eight repositories.
+
+    This is one half of a two-part change and the halves are unshippable apart: the finalize
+    push depended entirely on the persisted config, so `persist-credentials: false` alone
+    breaks every run. Its other half is
+    `test_cli.test_the_hosted_push_authenticates_from_the_environment_not_from_argv`.
+    """
+    data = yaml.safe_load(Path(".github/workflows/factory-runner.yml").read_text())
+    steps = data["jobs"]["run"]["steps"]
+
+    checkout = next(
+        step for step in steps if (step.get("uses") or "").startswith("actions/checkout@")
+    )
+    assert checkout["with"]["persist-credentials"] is False
+
+
+def test_the_finalize_step_holds_the_push_token_and_the_coding_step_does_not() -> None:
+    """The credential moved from a file the agent can read to an env var in a different step.
+
+    That separation IS the fix -- a `GITHUB_TOKEN` on the coding step would hand the agent the
+    same secret by a shorter route and every other assertion here would still pass.
+    """
+    data = yaml.safe_load(Path(".github/workflows/factory-runner.yml").read_text())
+    steps = data["jobs"]["run"]["steps"]
+
+    finalize = next(step for step in steps if step.get("id") == "finalize")
+    coding = next(step for step in steps if step.get("id") == "coding")
+
+    assert finalize["env"]["GITHUB_TOKEN"] == "${{ secrets.FACTORY_PR_TOKEN }}"
+    assert "GITHUB_TOKEN" not in (coding.get("env") or {})
+    assert "FACTORY_PR_TOKEN" not in yaml.dump(coding)

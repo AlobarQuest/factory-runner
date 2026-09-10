@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -319,6 +320,49 @@ def _workspace_exclude_entry(workspace: Path, checkout: Path) -> str:
 
 _GIT_AUTHOR_NAME = "factory-runner"
 _GIT_AUTHOR_EMAIL = "factory-runner@users.noreply.github.com"
+
+_LOCAL_HEAVY_RUNTIME = "local-heavy"
+_PUSH_TOKEN_VARIABLE = "GITHUB_TOKEN"
+_GITHUB_EXTRAHEADER_KEY = "http.https://github.com/.extraheader"
+
+
+def _pushes_with_ambient_credentials(run: Mapping[str, Any]) -> bool:
+    """Whether this lane's push should use the credential the machine already holds.
+
+    Only the local-heavy lane, which runs on an operator's machine where a keychain or
+    `gh` credential helper IS the legitimate credential. Anything else -- including a
+    run.json too old or too damaged to say which lane wrote it -- is treated as hosted,
+    because that is the direction where being wrong is loud: the hosted checkout carries
+    no credential at all, so a bare push is refused by the remote and says so, while a
+    hosted run mistaken for local-heavy would push nothing and blame github.
+    """
+    return run.get("runtime") == _LOCAL_HEAVY_RUNTIME
+
+
+def _git_push_environment(token: str, base_environment: Mapping[str, str]) -> dict[str, str]:
+    """Return `base_environment` plus a github.com credential, for ONE git subprocess.
+
+    `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_<n>` / `GIT_CONFIG_VALUE_<n>` add config to a git
+    process's runtime configuration, zero-indexed, overriding config files (git-config(1),
+    "ENVIRONMENT"). That is the only channel here that reaches neither argv -- which `ps`
+    shows to anything else on the runner, and which `_run_command` interpolates into its
+    RuntimeError on failure -- nor a file that outlives the call.
+
+    The header is the one `actions/checkout` builds, so it is authenticating exactly as the
+    persisted credential used to. What changed is lifetime: this exists for the length of
+    one `git push` and in no process the coding agent can read.
+
+    Starting from `base_environment` rather than `{}` is load-bearing: `subprocess.run(env=)`
+    REPLACES the environment, so a bare three-key dict would leave git with no PATH and no
+    HOME.
+    """
+    credential = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    return {
+        **base_environment,
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": _GITHUB_EXTRAHEADER_KEY,
+        "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {credential}",
+    }
 
 
 def _run_command(command: list[str], **kwargs: Any) -> str:
@@ -828,6 +872,21 @@ def _finalize_workspace(
         typer.echo("workspace work unit mismatch", err=True)
         raise typer.Exit(code=1)
 
+    # Resolved BEFORE the verifier commands, which are the expensive part of this function: a
+    # hosted run whose credential never arrived should cost seconds, not a full `make check`
+    # followed by a refusal at the remote.
+    push_environment: dict[str, str] | None = None
+    if not _pushes_with_ambient_credentials(run):
+        token = os.environ.get(_PUSH_TOKEN_VARIABLE, "")
+        if not token:
+            typer.echo(
+                f"{_PUSH_TOKEN_VARIABLE} is not set, and the checkout carries no credential "
+                "of its own; the hosted lane must authenticate its push explicitly",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        push_environment = _git_push_environment(token, os.environ)
+
     # Both lanes converge here, and here is the only place that matters: `prepare_run` excludes
     # artifacts for the dispatched lane only, while the `git add -A` below sweeps BOTH. The
     # local-heavy lane therefore reached this line with its workspace -- and the lease token in
@@ -913,7 +972,9 @@ def _finalize_workspace(
             _commit_message(brief, attempt),
         ]
     )
-    _run_command(["git", "push", "--set-upstream", "origin", branch])
+    # `env=None` inherits, which is what the local-heavy lane wants and what every other
+    # command here gets. The hosted lane is the only caller that hands git a credential.
+    _run_command(["git", "push", "--set-upstream", "origin", branch], env=push_environment)
     head_sha = _run_command(["git", "rev-parse", "HEAD"]).strip()
     pr_url = _run_command(
         [
