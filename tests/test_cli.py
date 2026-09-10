@@ -2343,8 +2343,6 @@ def test_the_verifier_runs_with_no_runner_credential_in_its_environment(
     environment = cast("dict[str, str]", verifier[1]["env"])
     assert "GITHUB_TOKEN" not in environment
     assert "FACTORY_RUNNER_TOKEN" not in environment
-    # Scrubbed from the COPY only -- the client and the `gh` commands still authenticate.
-    assert os.environ["FACTORY_RUNNER_TOKEN"] == "m2m-redacted"
     assert "PATH" in environment
 
 
@@ -2385,3 +2383,30 @@ def test_an_unparseable_inherited_config_count_does_not_crash_the_push(tmp_path:
 
     assert environment["GIT_CONFIG_COUNT"] == "1"
     assert environment["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraheader"
+
+
+def test_scrubbing_the_verifier_environment_leaves_the_process_environment_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scrub must take from the COPY, or it disarms the runner's own credentials.
+
+    `_client` reads `FACTORY_RUNNER_TOKEN` from `os.environ` and the `gh` commands inherit
+    rather than being handed an environment, so a scrub reaching `os.environ` would break
+    evidence submission and `gh pr create` -- after the push, with the branch already up.
+
+    Asserted here rather than through the finalize harness because `CliRunner.invoke`
+    restores `os.environ` when it returns, so the same assertion made after an invocation
+    passes whether or not the scrub was confined to the copy. It measured the test runner's
+    teardown, not the code.
+    """
+    from factory_runner import cli as cli_module
+
+    monkeypatch.setenv("FACTORY_RUNNER_TOKEN", "m2m-redacted")
+    monkeypatch.setenv("GITHUB_TOKEN", "push-token-redacted")
+
+    environment = cli_module._verification_environment(Path("."))
+
+    assert "FACTORY_RUNNER_TOKEN" not in environment
+    assert "GITHUB_TOKEN" not in environment
+    assert os.environ["FACTORY_RUNNER_TOKEN"] == "m2m-redacted"
+    assert os.environ["GITHUB_TOKEN"] == "push-token-redacted"
