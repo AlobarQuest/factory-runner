@@ -1,0 +1,4 @@
+# Whether the SDS factory may be dispatched work in this repository.
+# Absence of this file means NO -- participation is declared, never assumed.
+factory_target = false
+factory_target_reason = "ADR-0015 — the runner may not maintain itself; a factory run would verify changes to the runner using a pinned older copy of the runner."
