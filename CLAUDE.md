@@ -43,6 +43,13 @@
   `unknown_brief_keys()` at the parse site and ride into the PR evidence payload;
   do not "simplify" either half away — tolerating silently is the same defect
   wearing the opposite coat.
+- `OrchestratorClient` retries transient failures (502/503/504, network/timeout/
+  remote-protocol errors) only for GETs and for POSTs passed `idempotent=True`, which
+  must carry an `idempotency_key` or are refused before sending. Claim, renew and
+  reclaim are deliberately NOT marked: the orchestrator replays them WITHOUT the lease
+  token, so retrying after a committed-but-lost response cannot recover the grant.
+  Before marking a new call idempotent, confirm the orchestrator's replay returns what
+  the runner reads from the response.
 
 <!-- code-standards:start -->
 # Code Quality (code-standards layer)
