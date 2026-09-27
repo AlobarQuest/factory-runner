@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated, Any
 
+import httpx
 import typer
 
 from factory_runner.authority import AuthorityError, validate_authority
@@ -526,7 +527,9 @@ def _post_evidence_pack_comment(client: OrchestratorClient, work_unit_id: str, p
         markdown = client.get_evidence_pack_markdown(work_unit_id)
         body = f"{marker}\n{markdown}"
         _upsert_pr_comment(pr_url, marker, body)
-    except (OrchestratorError, RuntimeError) as error:
+    except (OrchestratorError, RuntimeError, httpx.TransportError) as error:
+        # httpx.TransportError: the client re-raises a transport failure once its retry budget
+        # is spent, and a projection must not turn that into a failed finalize.
         typer.echo(f"evidence-pack comment skipped: {error}", err=True)
 
 
@@ -890,7 +893,7 @@ def _emit_cost_actuals(
             cost_usd=actuals.cost_usd,
             idempotency_key=f"factory-runner:{work_unit_id}:cost:a{attempt}",
         )
-    except OrchestratorError as error:
+    except (OrchestratorError, httpx.TransportError) as error:
         # Cost actuals is best-effort telemetry, not a delivery gate: a missing route or a
         # transient 5xx here must never stop the terminal submit/fail transition that follows.
         typer.echo(f"cost-actuals emit skipped: {error}", err=True)
@@ -951,22 +954,29 @@ def _finalize_workspace(
         typer.echo("authority does not allow evidence submission", err=True)
         raise typer.Exit(code=1)
     verification_commands = permissions.allowed_commands
+    mutation_commands = set(permissions.mutation_commands)
 
     verification_summaries: list[str] = []
     verification_payloads: list[dict[str, object]] = []
     verification_environment = _verification_environment(Path.cwd())
     for command_text in verification_commands:
+        # `_run_command` raises on any nonzero exit -- a red command must stop the pull request
+        # from opening -- so an entry is recorded only for a command that exited 0. The code
+        # is stated here as that fact rather than as a result anybody measured separately.
         _run_command(
             ["/bin/bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", command_text],
             cwd=Path.cwd(),
             env=verification_environment,
         )
-        verification_summaries.append(f"{command_text}: passed")
+        # A mutator ran; it verified nothing. Reporting it as `passed` put a claim of
+        # verification into the evidence about a command whose job is to change the tree.
+        summary = "applied" if command_text in mutation_commands else "passed"
+        verification_summaries.append(f"{command_text}: {summary}")
         verification_payloads.append(
             {
                 "command": command_text,
                 "exit_code": 0,
-                "summary": "passed",
+                "summary": summary,
                 "run_url": os.environ.get("GITHUB_SERVER_URL")
                 and os.environ.get("GITHUB_REPOSITORY")
                 and os.environ.get("GITHUB_RUN_ID")

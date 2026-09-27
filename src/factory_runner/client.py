@@ -1,3 +1,6 @@
+import sys
+import time
+from collections.abc import Callable
 from typing import Any, Literal
 
 import httpx
@@ -45,7 +48,33 @@ class OrchestratorAuthError(OrchestratorError):
     pass
 
 
+# The statuses a proxy answers when it cannot reach the application: the orchestrator's own
+# redeploy is not zero-downtime (~22 s of `no available server`, measured 2026-09-01). 500 is
+# the application answering, so it is a defect to report, not a gap to wait out.
+RETRYABLE_STATUSES = frozenset({502, 503, 504})
+
+# Transport failures that mean "the request did not get a response", not "the request is
+# malformed". A bad URL scheme (UnsupportedProtocol) or a local protocol error is a
+# configuration defect that no amount of waiting fixes, so the narrower subclasses are named.
+RETRYABLE_TRANSPORT_ERRORS: tuple[type[Exception], ...] = (
+    httpx.NetworkError,
+    httpx.TimeoutException,
+    httpx.RemoteProtocolError,
+)
+
+
+def _stderr(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
 class OrchestratorClient:
+    # No retry STARTS after this much elapsed waiting; one request timeout may follow it, so
+    # the worst case per call is about three minutes. Sized to outlast the measured swap gap
+    # several times over while keeping a genuinely-down orchestrator well inside the job's
+    # 60-minute timeout.
+    RETRY_BUDGET_SECONDS = 150.0
+    RETRY_MAX_DELAY_SECONDS = 30.0
+
     def __init__(
         self,
         *,
@@ -53,7 +82,13 @@ class OrchestratorClient:
         credential_key_id: str,
         token: str,
         transport: httpx.BaseTransport | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
+        log: Callable[[str], None] = _stderr,
     ) -> None:
+        self._sleep = sleep
+        self._monotonic = monotonic
+        self._log = log
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
             headers={
@@ -176,11 +211,14 @@ class OrchestratorClient:
             "POST",
             f"/api/v1/work-units/{unit_id}/commands/{command}",
             json=payload,
+            idempotent=True,
         )
         return response.json()
 
     def submit_evidence(self, unit_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        response = self._request("POST", f"/api/v1/work-units/{unit_id}/evidence", json=payload)
+        response = self._request(
+            "POST", f"/api/v1/work-units/{unit_id}/evidence", json=payload, idempotent=True
+        )
         return response.json()
 
     def pr_binding(
@@ -204,6 +242,7 @@ class OrchestratorClient:
                 "attempt": attempt,
                 "lease_token": lease_token,
             },
+            idempotent=True,
         )
         return response.json()
 
@@ -236,6 +275,7 @@ class OrchestratorClient:
                 "output_tokens": output_tokens,
                 "cost_usd": cost_usd,
             },
+            idempotent=True,
         )
         return response.json()
 
@@ -243,8 +283,58 @@ class OrchestratorClient:
         response = self._request("GET", f"/api/v1/work-units/{unit_id}/evidence")
         return response.json()
 
-    def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        response = self._client.request(method, path, **kwargs)
+    def _request(
+        self, method: str, path: str, *, idempotent: bool = False, **kwargs: Any
+    ) -> httpx.Response:
+        """Send one logical request, retrying transient failures when a retry is safe.
+
+        Safe means the orchestrator answers a repeat with the original result: every GET, and a
+        POST marked `idempotent` -- which must carry the idempotency key the orchestrator
+        replays by, or it is refused here before anything is sent. A retry after a response was
+        lost therefore replays rather than performing the operation twice. Claim, renew and
+        reclaim are left unmarked on purpose: their replays withhold the lease token, so a retry
+        cannot recover a grant whose response was lost.
+        """
+        if idempotent and method != "GET":
+            body = kwargs.get("json")
+            key = body.get("idempotency_key") if isinstance(body, dict) else None
+            if not isinstance(key, str) or not key:
+                raise ValueError(f"{method} {path} is marked idempotent but has no idempotency_key")
+        retryable = method == "GET" or idempotent
+        started = self._monotonic()
+        retries = 0
+        while True:
+            try:
+                response = self._client.request(method, path, **kwargs)
+            except RETRYABLE_TRANSPORT_ERRORS as error:
+                delay = self._retry_delay(retryable, started, retries)
+                if delay is None:
+                    raise
+                failure = type(error).__name__
+            else:
+                if response.status_code not in RETRYABLE_STATUSES:
+                    return self._checked(response)
+                delay = self._retry_delay(retryable, started, retries)
+                if delay is None:
+                    return self._checked(response)
+                failure = str(response.status_code)
+            retries += 1
+            self._log(
+                f"orchestrator {method} {path} failed ({failure}); retry {retries} in {delay:g}s"
+            )
+            self._sleep(delay)
+
+    def _retry_delay(self, retryable: bool, started: float, retries: int) -> float | None:
+        """The wait before the next attempt, or None when no further attempt may start."""
+        if not retryable:
+            return None
+        delay = min(2.0**retries, self.RETRY_MAX_DELAY_SECONDS)
+        if self._monotonic() - started + delay > self.RETRY_BUDGET_SECONDS:
+            return None
+        return delay
+
+    @staticmethod
+    def _checked(response: httpx.Response) -> httpx.Response:
         if response.status_code == 401:
             raise OrchestratorAuthError("orchestrator authentication failed")
         if response.status_code >= 400:
