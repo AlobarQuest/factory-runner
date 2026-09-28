@@ -22,7 +22,6 @@ ROOT = Path(__file__).resolve().parents[1]
 VERSION_FILE = ROOT / ".python-version"
 PYPROJECT = ROOT / "pyproject.toml"
 WORKFLOWS = ROOT / ".github" / "workflows"
-DOCKERFILE = ROOT / "Dockerfile"
 
 MAJOR_MINOR = re.compile(r"^\d+\.\d+$")
 BARE_FLOOR = re.compile(r"^>=\d+\.\d+$")
