@@ -126,7 +126,7 @@ def verify_install_revision(expected: str) -> None:
     try:
         direct_url = metadata.distribution("factory-runner").read_text("direct_url.json")
         payload = json.loads(direct_url) if direct_url is not None else None
-    except (metadata.PackageNotFoundError, json.JSONDecodeError, OSError, TypeError):
+    except metadata.PackageNotFoundError, json.JSONDecodeError, OSError, TypeError:
         raise CodingResultError("factory runner revision cannot be verified") from None
     if not isinstance(payload, dict):
         raise CodingResultError("factory runner revision cannot be verified")

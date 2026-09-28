@@ -77,7 +77,7 @@ def authorize_tool(policy_path: Path, hook_input: Mapping[str, object]) -> tuple
     """Return an allow decision only for an exact Bash command or contained Edit path."""
     try:
         policy = _load_policy(policy_path)
-    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+    except OSError, TypeError, ValueError, json.JSONDecodeError:
         return False, "policy unavailable"
 
     tool_name = hook_input.get("tool_name")
@@ -188,7 +188,7 @@ def _authorize_edit(
     try:
         resolved_target = candidate.resolve(strict=False)
         _resolved_existing_parent(candidate)
-    except (OSError, RuntimeError):
+    except OSError, RuntimeError:
         return False, "Edit path cannot be resolved"
     git_root = (checkout_root / ".git").resolve(strict=False)
     if not _contains(checkout_root, resolved_target):
