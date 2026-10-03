@@ -101,39 +101,3 @@ def build_pr_opened_evidence(
         payload=payload,
         supersede=supersede,
     )
-
-
-def build_verification_evidence(
-    *,
-    revision_id: str,
-    ac_id: str,
-    attempt: int,
-    lease_token: str,
-    source_revision: str,
-    context_snapshot_id: str | None,
-    idempotency_key: str,
-    expected_version: int,
-    commands: list[dict[str, object]],
-) -> dict[str, Any]:
-    command_payloads = [build_verification_command_payload(command) for command in commands]
-    stable_ref = next(
-        (
-            command.get("run_url") or command.get("check_url")
-            for command in command_payloads
-            if command.get("run_url") or command.get("check_url")
-        ),
-        None,
-    )
-    return _base(
-        revision_id=revision_id,
-        ac_id=ac_id,
-        attempt=attempt,
-        lease_token=lease_token,
-        source_revision=source_revision,
-        context_snapshot_id=context_snapshot_id,
-        idempotency_key=idempotency_key,
-        expected_version=expected_version,
-        evidence_type="runner.verification",
-        stable_ref=stable_ref,
-        payload={"commands": command_payloads},
-    )

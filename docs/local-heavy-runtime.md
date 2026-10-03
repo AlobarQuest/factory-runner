@@ -104,6 +104,7 @@ factory-runner local-heavy-finalize \
 ```
 
 Finalize runs the allowed verification commands, creates a draft evidence-bearing
-PR, submits `runner.pr.opened` and `runner.verification` evidence, and transitions
+PR, submits one `runner.pr.opened` evidence row (it carries the verification
+commands), and transitions
 the work unit to `submitted`. It does not complete the work unit and does not
 merge the PR.

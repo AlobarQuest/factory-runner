@@ -16,7 +16,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from factory_runner.evidence import build_pr_opened_evidence, build_verification_evidence
+from factory_runner.evidence import build_pr_opened_evidence
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "orchestrator_command_contract.json"
 CONTRACT_SHA256 = "8efbb271ef09f6b1cba423e993af56cb0a762739fc06a160e63fb874bee45c3a"
@@ -55,17 +55,6 @@ def test_pr_opened_evidence_satisfies_evidence_command() -> None:
     assert required <= set(payload), f"missing required fields: {sorted(required - set(payload))}"
 
 
-def test_verification_evidence_satisfies_evidence_command() -> None:
-    payload = build_verification_evidence(
-        context_snapshot_id=None,
-        idempotency_key="factory-runner:unit-1:evidence:verification:a3",
-        commands=[{"command": "uv sync", "exit_code": 0, "summary": "passed"}],
-        **_COMMON,
-    )
-    required = set(_contract()["EvidenceCommand"]["required"])
-    assert required <= set(payload), f"missing required fields: {sorted(required - set(payload))}"
-
-
 def test_pr_binding_client_parameters_cover_the_orchestrator_command() -> None:
     import inspect
 
@@ -91,25 +80,6 @@ def test_absent_context_snapshot_is_null_not_the_string_none() -> None:
     )
     assert payload["context_snapshot_id"] is None
     assert payload["context_snapshot_id"] != "None"
-
-
-def test_evidence_idempotency_keys_differ_per_evidence_type() -> None:
-    """One key for both submissions would make the second replay the first."""
-    pr = build_pr_opened_evidence(
-        context_snapshot_id=None,
-        idempotency_key="factory-runner:unit-1:evidence:pr:a3",
-        pr_url="https://example.invalid/pr/1",
-        head_sha="cd1f0659",
-        **_COMMON,
-    )
-    verification = build_verification_evidence(
-        context_snapshot_id=None,
-        idempotency_key="factory-runner:unit-1:evidence:verification:a3",
-        commands=[{"command": "uv sync", "exit_code": 0, "summary": "passed"}],
-        **_COMMON,
-    )
-    assert pr["idempotency_key"] != verification["idempotency_key"]
-    assert pr["evidence_type"] != verification["evidence_type"]
 
 
 def test_optional_str_collapses_empty_and_none_to_null() -> None:
