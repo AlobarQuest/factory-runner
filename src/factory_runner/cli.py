@@ -422,13 +422,14 @@ def _run_command(command: list[str], **kwargs: Any) -> str:
 def _verification_environment(repo_root: Path) -> dict[str, str]:
     """The environment for the verifier commands: the repo's tools, and no credential.
 
-    The verifier re-executes `constraints.allowed_commands` -- `make check`, `npm test` --
-    and those run code the coding agent was authorized to EDIT. `authorize_tool`'s Edit gate
-    permits any path inside the checkout that is not `.git/` or protected runner metadata, so
-    a Makefile recipe, a test script and a test file are all in reach. Inheriting the process
-    environment therefore handed an eight-repository PAT to agent-authored code, by a shorter
-    route than the persisted checkout credential this change removes and one that
-    `persist-credentials: false` does not touch.
+    The verifier executes the finalize script (`authority.finalization_script`: the whole of
+    `constraints.allowed_commands`, or the mutators then `constraints.verify_commands`) --
+    `make check`, `npm test` -- and those run code the coding agent was authorized to EDIT.
+    `authorize_tool`'s Edit gate permits any path inside the checkout that is not `.git/` or
+    protected runner metadata, so a Makefile recipe, a test script and a test file are all in
+    reach. Inheriting the process environment therefore handed an eight-repository PAT to
+    agent-authored code, by a shorter route than the persisted checkout credential this change
+    removes and one that `persist-credentials: false` does not touch.
 
     This NARROWS; it does not make the lane hostile-agent-safe, and must not be cited as
     though it did. The agent still chooses what the verifier executes. What it can no longer
@@ -705,6 +706,7 @@ def prepare(
         "sanitized_brief": _sanitize_runner_brief(brief),
         "allowed_tools": list(permissions.allowed_tools),
         "allowed_commands": list(permissions.allowed_commands),
+        "verify_commands": list(permissions.verify_commands),
         "lease_facts": _lease_facts(brief),
         "context_snapshot_id": _context_snapshot_id(brief),
     }
@@ -1125,23 +1127,6 @@ def _finalize_workspace(
         },
     )
     typer.echo(f"{success_prefix} {work_unit_id}: {pr_url}")
-
-
-def _refreshed_verification_commands(
-    *,
-    client: OrchestratorClient,
-    work_unit_id: str,
-    run: dict[str, Any],
-    checkout: Path,
-    protected_paths: tuple[Path, ...],
-) -> tuple[str, ...]:
-    return _refreshed_finalization_permissions(
-        client=client,
-        work_unit_id=work_unit_id,
-        run=run,
-        checkout=checkout,
-        protected_paths=protected_paths,
-    ).allowed_commands
 
 
 def _refreshed_finalization_permissions(

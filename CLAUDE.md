@@ -16,7 +16,11 @@
   `mutation_commands`, mirrored by the orchestrator's
   `runner_command_authority_violation`. It is bound into the 0400 policy file
   (key omitted when absent, so old policies are byte-identical) and never widens
-  the Bash vocabulary.
+  the Bash vocabulary. Once `verify_commands` is declared, every allowed command
+  outside the mutators and the script is agent-only and finalize does NOT run
+  it. For edit-shaped work (no mutators) that includes a build step: a build the
+  verifier depends on must be listed in `verify_commands` (or as a mutator), or
+  finalize will not run it.
 - GitHub step success is not coding success. Finalization requires a parsed
   terminal success result; error_max_turns is coding_action_failed even when an
   action version emits is_error:false.

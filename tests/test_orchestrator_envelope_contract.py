@@ -57,6 +57,7 @@ from factory_runner.authority import (
     SUPPORTED_CAPABILITIES,
     SUPPORTED_LEVELS,
     AuthorityError,
+    finalization_script,
     validate_authority,
 )
 from factory_runner.capability_vocabulary import CAPABILITY_VOCABULARY
@@ -249,6 +250,26 @@ def test_a_malformed_verify_script_is_refused(
     """The rules the orchestrator mirrors in `runner_command_authority_violation`."""
     with pytest.raises(AuthorityError, match=message):
         _validated_verify({"verify_commands": verify_commands})
+
+
+def test_an_edit_shaped_verify_script_runs_only_the_script() -> None:
+    """Edit-shaped work has no mutators, so with the key declared finalize runs the verify
+    script and NOTHING else -- a build listed only in allowed_commands is agent vocabulary and
+    is not run. A build the verifier depends on must be in verify_commands. Intended (3c-1)."""
+    payload = golden_edit_envelope()
+    payload["constraints"]["work_unit_id"] = EDIT_WORK_UNIT_ID
+    payload["constraints"]["allowed_commands"] = ["uv sync", "npm run build", "make check"]
+    payload["constraints"]["verify_commands"] = ["make check"]
+
+    permissions = validate_authority(
+        AuthorityEnvelope.model_validate(payload),
+        work_unit_id=EDIT_WORK_UNIT_ID,
+        target_repo=EDIT_TARGET_REPOSITORY,
+        current_repo=EDIT_TARGET_REPOSITORY,
+    )
+
+    assert permissions.mutation_commands == ()
+    assert finalization_script(permissions) == (("make check", "passed"),)
 
 
 def test_verify_commands_is_ignored_without_command_run() -> None:

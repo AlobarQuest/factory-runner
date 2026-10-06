@@ -286,6 +286,7 @@ def test_prepare_emits_sanitized_json_contract() -> None:
     payload = json.loads(result.stdout)
     assert payload["allowed_tools"] == ["Read", "Edit", "Bash", "Glob"]
     assert payload["allowed_commands"] == ["make check"]
+    assert payload["verify_commands"] == []
     assert payload["context_snapshot_id"] == "snapshot-1"
     assert payload["lease_facts"] == {
         "authority_fingerprint": "0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31",
@@ -954,24 +955,20 @@ def test_refreshed_authority_replay_is_stable_and_preserves_duplicates(tmp_path:
         def get_runner_brief(self, _unit_id: str) -> RunnerBrief:
             return brief
 
-    from factory_runner.cli import _refreshed_verification_commands
+    from factory_runner.authority import finalization_script
+    from factory_runner.cli import _refreshed_finalization_permissions
 
-    first = _refreshed_verification_commands(
-        client=cast(OrchestratorClient, FakeClient()),
-        work_unit_id="unit-1",
-        run=run,
-        checkout=Path.cwd(),
-        protected_paths=(tmp_path,),
-    )
-    second = _refreshed_verification_commands(
-        client=cast(OrchestratorClient, FakeClient()),
-        work_unit_id="unit-1",
-        run=run,
-        checkout=Path.cwd(),
-        protected_paths=(tmp_path,),
-    )
+    def replay() -> tuple[str, ...]:
+        permissions = _refreshed_finalization_permissions(
+            client=cast(OrchestratorClient, FakeClient()),
+            work_unit_id="unit-1",
+            run=run,
+            checkout=Path.cwd(),
+            protected_paths=(tmp_path,),
+        )
+        return tuple(command for command, _label in finalization_script(permissions))
 
-    assert first == second == ("uv sync --locked", "uv sync --locked")
+    assert replay() == replay() == ("uv sync --locked", "uv sync --locked")
 
 
 def test_exact_bash_execution_preserves_shell_quoting_for_uv(tmp_path: Path) -> None:
