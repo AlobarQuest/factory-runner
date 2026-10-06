@@ -19,9 +19,16 @@ def write_tool_policy(
     *,
     edit_allowed: bool,
     protected_paths: tuple[Path, ...] = (),
+    verify_commands: tuple[str, ...] = (),
 ) -> tuple[Path, Path]:
-    """Write the runner-owned hook policy and Claude settings outside the checkout."""
+    """Write the runner-owned hook policy and Claude settings outside the checkout.
+
+    `verify_commands` is bound here, beside the command vocabulary, so the finalize script is
+    part of what the 0400 policy and its digest attest. It plays no part in `authorize_tool`:
+    the agent's Bash vocabulary is `allowed_commands` alone.
+    """
     commands = _validated_commands(allowed_commands)
+    verify = _validated_verify_commands(verify_commands)
     checkout_root = _resolved_directory(checkout)
     protected = _resolved_protected_paths(protected_paths)
     resolved_policy_dir = policy_dir.resolve()
@@ -34,7 +41,9 @@ def write_tool_policy(
     policy_path = resolved_policy_dir / "policy.json"
     settings_path = resolved_policy_dir / "settings.json"
     policy_path.write_bytes(
-        _canonical_policy_bytes(fingerprint, commands, checkout_root, edit_allowed, protected)
+        _canonical_policy_bytes(
+            fingerprint, commands, checkout_root, edit_allowed, protected, verify
+        )
     )
     policy_path.chmod(0o400)
     quoted_policy_path = shlex.quote(str(policy_path))
@@ -108,6 +117,7 @@ def policy_digest(
     checkout: Path,
     protected_paths: tuple[Path, ...] = (),
     edit_allowed: bool,
+    verify_commands: tuple[str, ...] = (),
 ) -> str:
     """Return the digest for an expected policy built from immutable authority."""
     return hashlib.sha256(
@@ -117,18 +127,20 @@ def policy_digest(
             _resolved_directory(checkout),
             edit_allowed,
             _resolved_protected_paths(protected_paths),
+            _validated_verify_commands(verify_commands),
         )
     ).hexdigest()
 
 
 def read_policy(
     policy_path: Path,
-) -> tuple[str, tuple[str, ...], Path, bool, tuple[Path, ...], str]:
+) -> tuple[str, tuple[str, ...], tuple[str, ...], Path, bool, tuple[Path, ...], str]:
     """Load a valid policy and return its immutable fields plus canonical digest."""
     policy = _load_policy(policy_path)
     return (
         policy["authority_fingerprint"],
         policy["allowed_commands"],
+        policy["verify_commands"],
         policy["checkout_root"],
         policy["edit_allowed"],
         policy["protected_paths"],
@@ -162,6 +174,15 @@ def _load_policy(policy_path: Path) -> dict[str, Any]:
     if not isinstance(commands, list):
         raise ValueError("invalid allowed commands")
     validated_commands = _validated_commands(tuple(commands))
+    # Absent, never empty: a policy written for an envelope without verify_commands carries
+    # no key at all, so its bytes are exactly what they were before the key existed.
+    if "verify_commands" in payload:
+        verify = payload["verify_commands"]
+        if not isinstance(verify, list):
+            raise ValueError("invalid verify commands")
+        validated_verify = _validated_commands(tuple(verify))
+    else:
+        validated_verify = ()
     if not isinstance(checkout, str):
         raise ValueError("invalid checkout root")
     if not isinstance(edit_allowed, bool):
@@ -173,6 +194,7 @@ def _load_policy(policy_path: Path) -> dict[str, Any]:
     return {
         "authority_fingerprint": fingerprint,
         "allowed_commands": validated_commands,
+        "verify_commands": validated_verify,
         "checkout_root": _resolved_directory(Path(checkout)),
         "edit_allowed": edit_allowed,
         "protected_paths": _resolved_protected_paths(tuple(Path(path) for path in protected_paths)),
@@ -234,22 +256,30 @@ def _validated_commands(commands: tuple[object, ...]) -> tuple[str, ...]:
     return tuple(command for command in commands if isinstance(command, str))
 
 
+def _validated_verify_commands(commands: tuple[object, ...]) -> tuple[str, ...]:
+    return _validated_commands(commands) if commands else ()
+
+
 def _canonical_policy_bytes(
     fingerprint: str,
     commands: tuple[str, ...],
     checkout: Path,
     edit_allowed: bool,
     protected_paths: tuple[Path, ...],
+    verify_commands: tuple[str, ...],
 ) -> bytes:
+    policy: dict[str, object] = {
+        "authority_fingerprint": fingerprint,
+        "allowed_commands": list(commands),
+        "checkout_root": str(checkout),
+        "edit_allowed": edit_allowed,
+        "protected_paths": [str(path) for path in protected_paths],
+    }
+    if verify_commands:
+        policy["verify_commands"] = list(verify_commands)
     return (
         json.dumps(
-            {
-                "authority_fingerprint": fingerprint,
-                "allowed_commands": list(commands),
-                "checkout_root": str(checkout),
-                "edit_allowed": edit_allowed,
-                "protected_paths": [str(path) for path in protected_paths],
-            },
+            policy,
             separators=(",", ":"),
             sort_keys=True,
         )

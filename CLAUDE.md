@@ -8,6 +8,19 @@
 - allowed_commands is enforced by a runner-owned exact-match PreToolUse hook;
   prompt text and bare action permissions are not the authority boundary. The
   hook must exit 2 to deny.
+- finalize runs `authority.finalization_script`: without
+  `constraints.verify_commands` it replays `allowed_commands` in order (the
+  shape every envelope before 3c-1 was approved under); with it, the mutators in
+  `allowed_commands` order, then `verify_commands` in its own order. The verify
+  script must be a subset of `allowed_commands` and disjoint from
+  `mutation_commands`, mirrored by the orchestrator's
+  `runner_command_authority_violation`. It is bound into the 0400 policy file
+  (key omitted when absent, so old policies are byte-identical) and never widens
+  the Bash vocabulary. Once `verify_commands` is declared, every allowed command
+  outside the mutators and the script is agent-only and finalize does NOT run
+  it. For edit-shaped work (no mutators) that includes a build step: a build the
+  verifier depends on must be listed in `verify_commands` (or as a mutator), or
+  finalize will not run it.
 - GitHub step success is not coding success. Finalization requires a parsed
   terminal success result; error_max_turns is coding_action_failed even when an
   action version emits is_error:false.

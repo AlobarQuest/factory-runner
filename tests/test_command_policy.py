@@ -301,3 +301,104 @@ def test_authorize_tool_denies_every_git_subtree_edit(tmp_path: Path, git_path: 
     )
 
     assert allowed is False
+
+
+_FINGERPRINT = "0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31"
+
+# `_canonical_policy_bytes` for a policy WITHOUT verify_commands, computed with the function as
+# it stood on origin/main before 3c-1 (b025a56). Every policy written
+# for an envelope without the key must keep these exact bytes.
+_PRE_VERIFY_POLICY_BYTES = (
+    b'{"allowed_commands":["uv add x","uv lock --check"],'
+    b'"authority_fingerprint":"0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31",'
+    b'"checkout_root":"/checkout","edit_allowed":true,'
+    b'"protected_paths":["/checkout/.factory-runner"]}\n'
+)
+_PRE_VERIFY_POLICY_DIGEST = "49f4682f9ac82d12948c532d7fc32fd50bf4fd33ba45bff29dc702adba136d2e"
+
+
+def test_a_policy_without_verify_commands_keeps_its_pre_3c1_bytes() -> None:
+    import hashlib
+
+    from factory_runner.command_policy import _canonical_policy_bytes
+
+    written = _canonical_policy_bytes(
+        _FINGERPRINT,
+        ("uv add x", "uv lock --check"),
+        Path("/checkout"),
+        True,
+        (Path("/checkout/.factory-runner"),),
+        (),
+    )
+
+    assert written == _PRE_VERIFY_POLICY_BYTES
+    assert hashlib.sha256(written).hexdigest() == _PRE_VERIFY_POLICY_DIGEST
+
+
+def test_a_verify_script_is_written_into_the_policy_and_its_digest(tmp_path: Path) -> None:
+    """SDS 1.1 3c-1: the finalize script is attested by the same 0400 file as the vocabulary."""
+    from factory_runner.command_policy import policy_digest, read_policy
+
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    commands = ("uv add x", "uv lock --check")
+    policy, _settings = write_tool_policy(
+        tmp_path / "policy",
+        checkout,
+        commands,
+        _FINGERPRINT,
+        edit_allowed=True,
+        verify_commands=("uv lock --check",),
+    )
+
+    assert json.loads(policy.read_text())["verify_commands"] == ["uv lock --check"]
+    _fingerprint, _commands, verify, *_rest, digest = read_policy(policy)
+    assert verify == ("uv lock --check",)
+    assert digest == policy_digest(
+        fingerprint=_FINGERPRINT,
+        allowed_commands=commands,
+        checkout=checkout,
+        edit_allowed=True,
+        verify_commands=("uv lock --check",),
+    )
+    assert digest != policy_digest(
+        fingerprint=_FINGERPRINT, allowed_commands=commands, checkout=checkout, edit_allowed=True
+    )
+
+
+def test_a_verify_script_does_not_widen_the_bash_vocabulary(tmp_path: Path) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    policy, _settings = write_tool_policy(
+        tmp_path / "policy",
+        checkout,
+        ("uv add x",),
+        _FINGERPRINT,
+        edit_allowed=True,
+        verify_commands=("uv lock --check",),
+    )
+
+    allowed, _reason = authorize_tool(
+        policy, {"tool_name": "Bash", "tool_input": {"command": "uv lock --check"}}
+    )
+
+    assert allowed is False
+
+
+@pytest.mark.parametrize("verify", [[], "uv lock --check", [""], [3]])
+def test_a_policy_with_a_malformed_verify_script_is_unavailable(
+    tmp_path: Path, verify: object
+) -> None:
+    from factory_runner.command_policy import read_policy
+
+    policy = _policy(tmp_path)
+    payload = json.loads(policy.read_text())
+    payload["verify_commands"] = verify
+    policy.chmod(0o600)
+    policy.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError):
+        read_policy(policy)
+    assert authorize_tool(
+        policy, {"tool_name": "Bash", "tool_input": {"command": "uv sync --locked"}}
+    ) == (False, "policy unavailable")
