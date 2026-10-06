@@ -1,0 +1,30 @@
+{
+  "budgets": {
+    "max_attempts": 3,
+    "max_llm_calls": 360
+  },
+  "capabilities": {
+    "command.run": "allowed",
+    "github.pr.create": "allowed",
+    "orchestrator.claim": "allowed",
+    "orchestrator.evidence.write": "allowed",
+    "repo.edit": "allowed",
+    "repo.read": "allowed"
+  },
+  "change_class": "dependency-update",
+  "conformance": {
+    "accepted_standards": [],
+    "standards_touched": ["project"],
+    "status": "green"
+  },
+  "constraints": {
+    "allowed_commands": [
+      "uv add --dev 'ruff>=0.15.21'",
+      "uv lock --check"
+    ],
+    "mutation_commands": ["uv add --dev 'ruff>=0.15.21'"],
+    "target_repository": "AlobarQuest/change-manager",
+    "verify_commands": ["uv lock --check"],
+    "work_unit_id": "__WORK_UNIT_ID__"
+  }
+}

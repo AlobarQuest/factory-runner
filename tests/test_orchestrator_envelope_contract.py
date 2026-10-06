@@ -17,7 +17,15 @@ agent produces the diff and no command mutates a tracked file. Both repos enforc
 predicate; WS-P2.33 exists because they did not, and the byte-identical dependency-update
 fixture stayed green while production disagreed.
 
-The THIRD fixture, `runner_envelope_contract.json`, is the DECLARATION, where the two above
+`runner_authority_envelope_verify.json` pins the optional `constraints.verify_commands`
+(SDS 1.1 item 3c-1): the ordered script finalize runs after the mutators, separate from the
+`allowed_commands` vocabulary. Unlike the two above it is a DECLARED shape rather than a record
+of dispatched work -- it is the uv pin bump the dependency-update profile emits from 3c-1 on, so
+the orchestrator can assert both that the runner contract admits it and that its known-good
+pattern recognises it. Both repos enforce the same rule: a subset of `allowed_commands`,
+disjoint from `mutation_commands`.
+
+The contract fixture, `runner_envelope_contract.json`, is the DECLARATION, where the two above
 are SPECIMENS -- and WS-P3.7 moved the capability names into it for that reason. Every
 capability in both envelopes is declared "allowed", so their bytes are satisfied by a one-term
 level set and say nothing about "prohibited". They also record real dispatched work, which is
@@ -52,13 +60,18 @@ from factory_runner.authority import (
     validate_authority,
 )
 from factory_runner.capability_vocabulary import CAPABILITY_VOCABULARY
-from factory_runner.models import AuthorityEnvelope
+from factory_runner.models import AuthorityEnvelope, RunnerPermissions
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "runner_authority_envelope.json"
 CONTRACT_SHA256 = "049ab53e2b257fa3d7eb24748a4278ffc7e0e91f8174b05220eefd7d526e5a56"
 
 FIXTURE_EDIT = Path(__file__).resolve().parent / "fixtures" / "runner_authority_envelope_edit.json"
 CONTRACT_SHA256_EDIT = "90b73de69bdd9d5ee88be38b0a0ac2eeff1e4bb467ec72062cd1b70f49888f6e"
+
+FIXTURE_VERIFY = (
+    Path(__file__).resolve().parent / "fixtures" / "runner_authority_envelope_verify.json"
+)
+CONTRACT_SHA256_VERIFY = "809a8a5f34f0078fb2fceb3819a345ec18490c9bdd920975dca379358ae4061a"
 
 FIXTURE_CONTRACT = Path(__file__).resolve().parent / "fixtures" / "runner_envelope_contract.json"
 CONTRACT_SHA256_SURFACE = "74fe8042d2fc7b907ba6239758e28343071729234080d93e31114004c72a3867"
@@ -78,6 +91,10 @@ def golden_edit_envelope() -> dict[str, Any]:
     return json.loads(FIXTURE_EDIT.read_text())
 
 
+def golden_verify_envelope() -> dict[str, Any]:
+    return json.loads(FIXTURE_VERIFY.read_text())
+
+
 def golden_contract() -> dict[str, list[str]]:
     return json.loads(FIXTURE_CONTRACT.read_text())
 
@@ -92,6 +109,12 @@ def test_golden_edit_envelope_is_unchanged() -> None:
     """A one-sided edit here means the orchestrator's copy has silently drifted."""
     canonical = json.dumps(golden_edit_envelope(), sort_keys=True, separators=(",", ":"))
     assert hashlib.sha256(canonical.encode()).hexdigest() == CONTRACT_SHA256_EDIT
+
+
+def test_golden_verify_envelope_is_unchanged() -> None:
+    """A one-sided edit here means the orchestrator's copy has silently drifted."""
+    canonical = json.dumps(golden_verify_envelope(), sort_keys=True, separators=(",", ":"))
+    assert hashlib.sha256(canonical.encode()).hexdigest() == CONTRACT_SHA256_VERIFY
 
 
 def test_shipped_vocabulary_is_derived_from_the_pinned_contract() -> None:
@@ -117,6 +140,7 @@ def test_each_golden_envelope_names_only_declared_capabilities() -> None:
     """
     assert frozenset(golden_envelope()["capabilities"]) <= SUPPORTED_CAPABILITIES
     assert frozenset(golden_edit_envelope()["capabilities"]) <= SUPPORTED_CAPABILITIES
+    assert frozenset(golden_verify_envelope()["capabilities"]) <= SUPPORTED_CAPABILITIES
 
 
 def test_runner_accepts_the_orchestrator_envelope() -> None:
@@ -171,6 +195,77 @@ def test_runner_accepts_the_edit_shaped_envelope() -> None:
     assert permissions.can_edit
     assert permissions.allowed_commands == ("uv sync", "make check")
     assert permissions.mutation_commands == ()
+
+
+def _validated_verify(constraints: dict[str, Any]) -> RunnerPermissions:
+    payload = golden_verify_envelope()
+    payload["constraints"] = {**payload["constraints"], **constraints}
+    payload["constraints"]["work_unit_id"] = WORK_UNIT_ID
+    return validate_authority(
+        AuthorityEnvelope.model_validate(payload),
+        work_unit_id=WORK_UNIT_ID,
+        target_repo=TARGET_REPOSITORY,
+        current_repo=TARGET_REPOSITORY,
+    )
+
+
+def test_runner_accepts_the_verify_script_envelope() -> None:
+    """verify_commands is carried through as its own ordered script, not folded into the list."""
+    permissions = _validated_verify({})
+
+    assert permissions.allowed_commands == ("uv add --dev 'ruff>=0.15.21'", "uv lock --check")
+    assert permissions.mutation_commands == ("uv add --dev 'ruff>=0.15.21'",)
+    assert permissions.verify_commands == ("uv lock --check",)
+
+
+def test_an_envelope_without_verify_commands_derives_an_empty_script() -> None:
+    """Absent is the old behaviour, so it must derive nothing the old envelopes lacked."""
+    payload = golden_envelope()
+    payload["constraints"]["work_unit_id"] = WORK_UNIT_ID
+
+    permissions = validate_authority(
+        AuthorityEnvelope.model_validate(payload),
+        work_unit_id=WORK_UNIT_ID,
+        target_repo=TARGET_REPOSITORY,
+        current_repo=TARGET_REPOSITORY,
+    )
+
+    assert permissions.verify_commands == ()
+
+
+@pytest.mark.parametrize(
+    ("label", "verify_commands", "message"),
+    [
+        ("empty", [], "verify_commands must be a non-empty list"),
+        ("not a list", "uv lock --check", "verify_commands must be a non-empty list"),
+        ("a blank entry", ["uv lock --check", " "], "verify_commands must be a non-empty list"),
+        ("outside allowed_commands", ["make check"], "must also appear in"),
+        ("also a mutation", ["uv add --dev 'ruff>=0.15.21'"], "must not also be a mutation"),
+    ],
+)
+def test_a_malformed_verify_script_is_refused(
+    label: str, verify_commands: object, message: str
+) -> None:
+    """The rules the orchestrator mirrors in `runner_command_authority_violation`."""
+    with pytest.raises(AuthorityError, match=message):
+        _validated_verify({"verify_commands": verify_commands})
+
+
+def test_verify_commands_is_ignored_without_command_run() -> None:
+    """The same reach as the other command lists: no command.run, no commands at all."""
+    payload = golden_verify_envelope()
+    payload["constraints"]["work_unit_id"] = WORK_UNIT_ID
+    payload["constraints"]["verify_commands"] = ["not allowed anywhere"]
+    payload["capabilities"] = {**payload["capabilities"], "command.run": "prohibited"}
+
+    permissions = validate_authority(
+        AuthorityEnvelope.model_validate(payload),
+        work_unit_id=WORK_UNIT_ID,
+        target_repo=TARGET_REPOSITORY,
+        current_repo=TARGET_REPOSITORY,
+    )
+
+    assert (permissions.allowed_commands, permissions.verify_commands) == ((), ())
 
 
 def test_mutation_commands_guard_still_fires_on_dependency_update() -> None:

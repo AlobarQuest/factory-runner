@@ -635,6 +635,267 @@ def test_finalize_replays_refreshed_commands_in_order_with_bash_argv(
     ]
 
 
+def _finalize_with_commands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    constraints: dict[str, list[str]],
+    *,
+    policy_verify_commands: tuple[str, ...] | None = None,
+) -> tuple[Any, list[str], list[dict[str, object]]]:
+    """Run finalize-run against an envelope carrying these command lists.
+
+    `policy_verify_commands` writes a policy file whose verify script differs from the
+    envelope's, which is what an agent rewriting the script would leave behind.
+    """
+    from factory_runner.authority import validate_authority
+    from factory_runner.command_policy import policy_digest
+
+    brief = _runner_brief()
+    brief.authority.envelope.constraints.pop("mutation_commands")
+    brief.authority.envelope.constraints.update(constraints)
+    permissions = validate_authority(
+        brief.authority.envelope,
+        work_unit_id="unit-1",
+        target_repo="AlobarQuest/orchestrator",
+        current_repo="AlobarQuest/orchestrator",
+    )
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    written_verify = (
+        permissions.verify_commands if policy_verify_commands is None else policy_verify_commands
+    )
+    policy, _settings = write_tool_policy(
+        tmp_path / "policy",
+        checkout,
+        permissions.allowed_commands,
+        brief.authority.fingerprint,
+        edit_allowed=True,
+        protected_paths=(tmp_path,),
+        verify_commands=written_verify,
+    )
+    (tmp_path / "brief.json").write_text(brief.model_dump_json())
+    (tmp_path / "run.json").write_text(
+        json.dumps(
+            {
+                "attempt": 1,
+                "authority_fingerprint": brief.authority.fingerprint,
+                "base_sha": "base",
+                "checkout_root": str(checkout),
+                "context_snapshot_id": None,
+                "lease_token": "lease-redacted",
+                "package_revision_id": "rev-1",
+                "policy_digest": policy_digest(
+                    fingerprint=brief.authority.fingerprint,
+                    allowed_commands=permissions.allowed_commands,
+                    checkout=checkout,
+                    edit_allowed=True,
+                    protected_paths=(tmp_path,),
+                    verify_commands=written_verify,
+                ),
+                "policy_file": str(policy),
+                "submit_expected_version": 5,
+                "work_unit_id": "unit-1",
+            }
+        )
+    )
+    calls: list[list[str]] = []
+    evidence: list[dict[str, object]] = []
+
+    class FakeClient:
+        def __init__(self, **_kwargs: object) -> None: ...
+
+        def get_runner_brief(self, _unit_id: str) -> RunnerBrief:
+            return brief
+
+        def list_evidence(self, _unit_id: str) -> list[dict[str, object]]:
+            return []
+
+        def pr_binding(self, _unit_id: str, **_payload: object) -> dict[str, object]:
+            return {"pr_number": 99}
+
+        def get_evidence_pack_markdown(self, _unit_id: str) -> str:
+            return "# Evidence Pack\n"
+
+        def submit_evidence(self, _unit_id: str, payload: dict[str, object]) -> dict[str, object]:
+            evidence.append(payload)
+            return {"id": "evidence-1"}
+
+        def cost_actuals(self, _unit_id: str, **_payload: object) -> dict[str, object]:
+            return {}
+
+        def submit(self, _unit_id: str, _payload: dict[str, object]) -> dict[str, object]:
+            return {"version": 6}
+
+    def fake_run(command: list[str], **_kwargs: object) -> str:
+        calls.append(command)
+        if command[:3] == ["git", "status", "--porcelain"]:
+            return " M file.py\n"
+        if command[:3] == ["gh", "pr", "create"]:
+            return "https://github.com/AlobarQuest/orchestrator/pull/99\n"
+        if command[:3] == ["gh", "pr", "view"]:
+            return "99\n"
+        return "head\n" if command[:3] == ["git", "rev-parse", "HEAD"] else ""
+
+    from factory_runner import cli as cli_module
+
+    monkeypatch.chdir(checkout)
+    monkeypatch.setattr(cli_module, "OrchestratorClient", FakeClient)
+    monkeypatch.setattr(cli_module, "_run_command", fake_run)
+    result = CliRunner().invoke(
+        app,
+        [
+            "finalize-run",
+            "--orchestrator-url",
+            "https://sds.alobar.net",
+            "--credential-key-id",
+            "factory-runner-github",
+            "--work-unit-id",
+            "unit-1",
+            "--workspace-dir",
+            str(tmp_path),
+        ],
+        env={"FACTORY_RUNNER_TOKEN": "redacted-token", "GITHUB_TOKEN": "push-token-redacted"},
+    )
+    bash = [command[-1] for command in calls if command[0] == "/bin/bash"]
+    return result, bash, evidence
+
+
+def _verification_labels(evidence: list[dict[str, object]]) -> list[tuple[object, object]]:
+    payload = cast(dict[str, Any], evidence[0]["payload"])
+    return [(entry["command"], entry["summary"]) for entry in payload["verification"]]
+
+
+def test_finalize_runs_mutators_then_the_verify_script_and_skips_the_rest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SDS 1.1 3c-1: with a verify script, the vocabulary is no longer the script.
+
+    `B` is authorised but in neither list, so finalize must not run it; the old behaviour
+    runs all three. The verify script also runs in its OWN order, not allowed_commands'.
+    """
+    result, bash, evidence = _finalize_with_commands(
+        tmp_path,
+        monkeypatch,
+        {
+            "allowed_commands": ["mutate-a", "explore-b", "verify-c", "verify-d"],
+            "mutation_commands": ["mutate-a"],
+            "verify_commands": ["verify-d", "verify-c"],
+        },
+    )
+
+    assert result.exit_code == 0, result.output
+    assert bash == ["mutate-a", "verify-d", "verify-c"]
+    assert _verification_labels(evidence) == [
+        ("mutate-a", "applied"),
+        ("verify-d", "passed"),
+        ("verify-c", "passed"),
+    ]
+
+
+def test_finalize_runs_mutators_in_allowed_order_not_mutation_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result, bash, _evidence = _finalize_with_commands(
+        tmp_path,
+        monkeypatch,
+        {
+            "allowed_commands": ["mutate-a", "mutate-b", "verify-c"],
+            "mutation_commands": ["mutate-b", "mutate-a"],
+            "verify_commands": ["verify-c"],
+        },
+    )
+
+    assert result.exit_code == 0, result.output
+    assert bash == ["mutate-a", "mutate-b", "verify-c"]
+
+
+def test_finalize_without_a_verify_script_replays_the_whole_vocabulary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Absent keeps exactly the old behaviour: allowed_commands, in order, labelled by role."""
+    result, bash, evidence = _finalize_with_commands(
+        tmp_path,
+        monkeypatch,
+        {
+            "allowed_commands": ["mutate-a", "explore-b", "verify-c"],
+            "mutation_commands": ["mutate-a"],
+        },
+    )
+
+    assert result.exit_code == 0, result.output
+    assert bash == ["mutate-a", "explore-b", "verify-c"]
+    assert _verification_labels(evidence) == [
+        ("mutate-a", "applied"),
+        ("explore-b", "passed"),
+        ("verify-c", "passed"),
+    ]
+
+
+def test_finalize_refuses_a_policy_whose_verify_script_was_changed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The verify script is bound into the 0400 policy and its digest, like the vocabulary.
+
+    The run.json digest here is computed over the TAMPERED policy, so the digest check alone
+    passes; what refuses is the comparison of the policy's script to the refreshed authority.
+    """
+    result, bash, _evidence = _finalize_with_commands(
+        tmp_path,
+        monkeypatch,
+        {
+            "allowed_commands": ["mutate-a", "verify-c"],
+            "mutation_commands": ["mutate-a"],
+            "verify_commands": ["verify-c"],
+        },
+        policy_verify_commands=("mutate-a",),
+    )
+
+    assert result.exit_code == 1
+    assert "authority policy changed before finalization" in result.output
+    assert bash == []
+
+
+def test_finalize_refuses_a_verify_script_dropped_from_the_policy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result, bash, _evidence = _finalize_with_commands(
+        tmp_path,
+        monkeypatch,
+        {
+            "allowed_commands": ["mutate-a", "verify-c"],
+            "mutation_commands": ["mutate-a"],
+            "verify_commands": ["verify-c"],
+        },
+        policy_verify_commands=(),
+    )
+
+    assert result.exit_code == 1
+    assert "authority policy changed before finalization" in result.output
+    assert bash == []
+
+
+def test_the_prompt_names_the_verify_script_when_it_is_not_the_vocabulary() -> None:
+    prompt = _prompt(
+        _runner_brief(),
+        ("mutate-a", "explore-b", "verify-c"),
+        replayed_commands=("mutate-a", "verify-c"),
+    )
+
+    assert "re-executes this\nexact list" not in prompt
+    assert "the runner re-executes these, in this order:\n- mutate-a\n- verify-c\n" in prompt
+
+
+def test_the_prompt_is_unchanged_when_the_script_is_the_vocabulary() -> None:
+    commands = ("mutate-a", "verify-c")
+
+    assert _prompt(_runner_brief(), commands, replayed_commands=commands) == _prompt(
+        _runner_brief(), commands
+    )
+    assert "The runner re-executes this\nexact list, in this order" in _prompt(
+        _runner_brief(), commands
+    )
+
+
 def test_finalize_stops_before_commands_when_refreshed_authority_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

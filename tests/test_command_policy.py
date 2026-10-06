@@ -301,3 +301,75 @@ def test_authorize_tool_denies_every_git_subtree_edit(tmp_path: Path, git_path: 
     )
 
     assert allowed is False
+
+
+_FINGERPRINT = "0f7ef81ecfab22d2a7b8258e94a670f414067d7298f5a5e71b66ade70d7b6f31"
+
+
+def test_a_verify_script_is_written_into_the_policy_and_its_digest(tmp_path: Path) -> None:
+    """SDS 1.1 3c-1: the finalize script is attested by the same 0400 file as the vocabulary."""
+    from factory_runner.command_policy import policy_digest, read_policy
+
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    commands = ("uv add x", "uv lock --check")
+    policy, _settings = write_tool_policy(
+        tmp_path / "policy",
+        checkout,
+        commands,
+        _FINGERPRINT,
+        edit_allowed=True,
+        verify_commands=("uv lock --check",),
+    )
+
+    assert json.loads(policy.read_text())["verify_commands"] == ["uv lock --check"]
+    _fingerprint, _commands, verify, *_rest, digest = read_policy(policy)
+    assert verify == ("uv lock --check",)
+    assert digest == policy_digest(
+        fingerprint=_FINGERPRINT,
+        allowed_commands=commands,
+        checkout=checkout,
+        edit_allowed=True,
+        verify_commands=("uv lock --check",),
+    )
+    assert digest != policy_digest(
+        fingerprint=_FINGERPRINT, allowed_commands=commands, checkout=checkout, edit_allowed=True
+    )
+
+
+def test_a_verify_script_does_not_widen_the_bash_vocabulary(tmp_path: Path) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    policy, _settings = write_tool_policy(
+        tmp_path / "policy",
+        checkout,
+        ("uv add x",),
+        _FINGERPRINT,
+        edit_allowed=True,
+        verify_commands=("uv lock --check",),
+    )
+
+    allowed, _reason = authorize_tool(
+        policy, {"tool_name": "Bash", "tool_input": {"command": "uv lock --check"}}
+    )
+
+    assert allowed is False
+
+
+@pytest.mark.parametrize("verify", [[], "uv lock --check", [""], [3]])
+def test_a_policy_with_a_malformed_verify_script_is_unavailable(
+    tmp_path: Path, verify: object
+) -> None:
+    from factory_runner.command_policy import read_policy
+
+    policy = _policy(tmp_path)
+    payload = json.loads(policy.read_text())
+    payload["verify_commands"] = verify
+    policy.chmod(0o600)
+    policy.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError):
+        read_policy(policy)
+    assert authorize_tool(
+        policy, {"tool_name": "Bash", "tool_input": {"command": "uv sync --locked"}}
+    ) == (False, "policy unavailable")
