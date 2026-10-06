@@ -1,0 +1,80 @@
+# .cred-consumers.toml — WS-0.7 rotation-lane consumer inventory for FACTORY_PR_TOKEN,
+# the fine-grained PAT the reusable workflow checks out and pushes with. This repo's
+# .bws-secrets.toml already owns its BWS record.
+#
+# Read by infraops-mcp-server's nightly security-drift run (src/security-drift/
+# cred-rotation.ts) once this file's absolute path is listed in
+# ~/.config/infra-drift/cred-consumers.list. Schema, consumer kinds and the strict
+# subset-TOML rules are documented in infraops-mcp-server/.cred-consumers.toml.
+#
+# consumers_verified is deliberately UNSET, which keeps this credential on the manual
+# checklist: Actions secret values are write-only, so the census below is by NAME, not by
+# fingerprint, and a rotation has two steps the executor cannot do. (1) The PAT's
+# repository-access list is a separate settings-page list that re-setting secrets never
+# changes. (2) The only valid verification is a throwaway branch workflow that pushes a
+# commit touching .github/workflows/** with the secret. See .bws-secrets.toml.
+#
+# History: the 2026-07-14 token was revoked; the current one was minted 2026-08-03 (BWS
+# creationDate). orchestrator and infraops-mcp-server kept the dead copy until
+# 2026-08-19. Values NEVER appear here.
+
+version = 1
+
+# Census 2026-10-06 (gh secret list over every non-archived AlobarQuest repo): EIGHT
+# repositories hold FACTORY_PR_TOKEN. Set dates: orchestrator 2026-08-19,
+# intent-packages 2026-08-03, infraops-mcp-server 2026-08-19, security-standards
+# 2026-08-04, change-manager 2026-08-04, brain 2026-08-04, project-standards
+# 2026-08-07, factory-runner 2026-08-29.
+[[credential]]
+id = "factory-pr-token"
+class = "github-pat-fine-grained"
+provider = "github"
+provider_identity = "AlobarQuest (fine-grained PAT; must keep Workflows read-and-write)"
+bws_uuid = "a3240c2e-92d7-4b32-a726-b49b0135565a"
+created = "2026-08-03"
+disposition = "reissue"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "a3240c2e-92d7-4b32-a726-b49b0135565a"
+  note = "FACTORY_PR_TOKEN (SDS Operator) — keeper"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/orchestrator"
+  name = "FACTORY_PR_TOKEN"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/intent-packages"
+  name = "FACTORY_PR_TOKEN"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/infraops-mcp-server"
+  name = "FACTORY_PR_TOKEN"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/security-standards"
+  name = "FACTORY_PR_TOKEN"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/change-manager"
+  name = "FACTORY_PR_TOKEN"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/brain"
+  name = "FACTORY_PR_TOKEN"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/project-standards"
+  name = "FACTORY_PR_TOKEN"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/factory-runner"
+  name = "FACTORY_PR_TOKEN"
