@@ -7,13 +7,13 @@
 # ~/.config/infra-drift/cred-consumers.list. Schema, consumer kinds and the strict
 # subset-TOML rules are documented in infraops-mcp-server/.cred-consumers.toml.
 #
-# Kept on the manual checklist STRUCTURALLY by rotation_preconditions (each is an executor
-# blocker), not merely by the unset consumers_verified: Actions secret values are
-# write-only, so the census below is by NAME, not by fingerprint, and a rotation has two
-# steps the executor cannot do. (1) The PAT's
+# Kept on infraops' manual checklist STRUCTURALLY by rotation_preconditions (each is a
+# legacy-executor blocker), not merely by the unset consumers_verified. The PAT's
 # repository-access list is a separate settings-page list that re-setting secrets never
-# changes. (2) The only valid verification is a throwaway branch workflow that pushes a
-# commit touching .github/workflows/** with the secret. See .bws-secrets.toml.
+# changes, so it is set when a person mints the new PAT. The SDS rotation executor
+# (orchestrator ADR-0055 increment 7, adapter github-pat) writes every Actions copy below
+# through its rotation App and verifies each by that repository's hourly
+# secret-fingerprint.yml report; that replaced the throwaway push probe. See .bws-secrets.toml.
 #
 # History: the 2026-07-14 token was revoked; the current one was minted 2026-08-03 (BWS
 # creationDate). orchestrator and infraops-mcp-server kept the dead copy until
@@ -23,11 +23,12 @@ version = 1
 # Subset-parser note: array items are split on commas, so a string inside an array must
 # contain no comma (a comma there is a parse error, which silences the whole registry).
 
-# Census 2026-10-06 (gh secret list over every non-archived AlobarQuest repo): EIGHT
-# repositories hold FACTORY_PR_TOKEN. Set dates: orchestrator 2026-08-19,
-# intent-packages 2026-08-03, infraops-mcp-server 2026-08-19, security-standards
-# 2026-08-04, change-manager 2026-08-04, brain 2026-08-04, project-standards
-# 2026-08-07, factory-runner 2026-08-29.
+# Census 2026-10-19 (gh secret list over every non-archived AlobarQuest repo): six
+# repositories hold FACTORY_PR_TOKEN with a reader: orchestrator, intent-packages,
+# infraops-mcp-server, security-standards, change-manager and brain. The copies in
+# project-standards (not a factory target) and factory-runner (never run) had no reader
+# and were dropped by Devon's decision of 2026-10-19. The portfolio scan fetches the
+# keeper from BWS each run (project-standards #50).
 [[credential]]
 id = "factory-pr-token"
 class = "github-pat-fine-grained"
@@ -36,7 +37,7 @@ provider_identity = "AlobarQuest (fine-grained PAT; must keep Workflows read-and
 bws_uuid = "a3240c2e-92d7-4b32-a726-b49b0135565a"
 created = "2026-08-03"
 disposition = "reissue"
-rotation_preconditions = ["extend the new PAT repository-access list (settings page only; no API) to every factory target and to factory-runner before setting any copy", "verify with a throwaway branch workflow that pushes a commit touching .github/workflows/** using the secret in every holding repo"]
+rotation_preconditions = ["extend the new PAT repository-access list (settings page only; no API) to every factory target and to factory-runner before setting any copy"]
 
   [[credential.consumer]]
   kind = "bws-secret"
@@ -74,11 +75,8 @@ rotation_preconditions = ["extend the new PAT repository-access list (settings p
   name = "FACTORY_PR_TOKEN"
 
   [[credential.consumer]]
-  kind = "gh-actions-secret"
-  repo = "AlobarQuest/project-standards"
-  name = "FACTORY_PR_TOKEN"
-
-  [[credential.consumer]]
-  kind = "gh-actions-secret"
-  repo = "AlobarQuest/factory-runner"
-  name = "FACTORY_PR_TOKEN"
+  kind = "runtime-fetch"
+  repo = "project-standards"
+  ref = "integrations/portfolio-scan.sh"
+  healthchecks_check = "portfolio-scan"
+  note = "launchd com.devon.portfolio-scan 03:00; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check portfolio-scan"
