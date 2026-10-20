@@ -43,7 +43,7 @@ rotation_preconditions = ["extend the new PAT repository-access list (settings p
   [[credential.consumer]]
   kind = "bws-secret"
   uuid = "a3240c2e-92d7-4b32-a726-b49b0135565a"
-  note = "FACTORY_PR_TOKEN (SDS Operator) — keeper"
+  note = "FACTORY_PR_TOKEN (Rotation / Keepers) — keeper"
 
   [[credential.consumer]]
   kind = "gh-actions-secret"
