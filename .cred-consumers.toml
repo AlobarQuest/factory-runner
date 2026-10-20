@@ -38,6 +38,8 @@ provider_identity = "AlobarQuest (fine-grained PAT; must keep Workflows read-and
 bws_uuid = "a3240c2e-92d7-4b32-a726-b49b0135565a"
 created = "2026-08-03"
 disposition = "reissue"
+rotated_by_sds = true
+rotate_requested = "2026-10-20"
 rotation_preconditions = ["extend the new PAT repository-access list (settings page only; no API) to every factory target and to factory-runner before setting any copy"]
 
   [[credential.consumer]]
