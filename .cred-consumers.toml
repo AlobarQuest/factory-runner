@@ -1,6 +1,7 @@
 # .cred-consumers.toml — WS-0.7 rotation-lane consumer inventory for FACTORY_PR_TOKEN,
-# the fine-grained PAT the reusable workflow checks out and pushes with. This repo's
-# .bws-secrets.toml already owns its BWS record.
+# the fine-grained PAT the reusable workflow checks out and pushes with (this repo's
+# .bws-secrets.toml already owns its BWS record), and for the fork-sync lane's
+# credentials (the GitHub App private key and the Anthropic API key; see the end).
 #
 # Read by infraops-mcp-server's nightly security-drift run (src/security-drift/
 # cred-rotation.ts) once this file's absolute path is listed in
@@ -80,3 +81,81 @@ rotation_preconditions = ["extend the new PAT repository-access list (settings p
   ref = "integrations/portfolio-scan.sh"
   healthchecks_check = "portfolio-scan"
   note = "launchd com.devon.portfolio-scan 03:00; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check portfolio-scan"
+
+# ── The fork-sync lane (orchestrator docs/operations/onboarding-a-fork.md) ──────────────
+# Three forks run the secure upstream-sync workflow: AlobarQuest/rtk, AlobarQuest/claude-octopus
+# and AlobarQuest/rea. Each holds APP_ID, APP_PRIVATE_KEY and ANTHROPIC_API_KEY as Actions
+# secrets. Census 2026-10-19 (gh secret list on each fork). A new fork adds its copies as
+# consumers to BOTH entries below.
+
+# The private key of GitHub App fork-secure-upstream-sync (App id 4094707, installed on
+# exactly the three forks), created 2026-10-19. BWS holds base64 of the PEM; every Actions
+# copy holds the decoded PEM. All three APP_PRIVATE_KEY copies were set 2026-10-19 from
+# this BWS secret. The APP_ID copies in the same three repositories hold the App id
+# (4094707), which is an identifier, not a credential, so they are not consumers here.
+# consumers_verified is unset: Actions secrets are write-only, so this census is by NAME.
+[[credential]]
+id = "fork-sync-app-private-key"
+class = "github-app-private-key"
+provider = "github"
+provider_identity = "GitHub App fork-secure-upstream-sync (id 4094707), Credentials page Key pairs tab"
+bws_uuid = "998b817e-6164-4b9f-9c52-b4e800e8270d"
+created = "2026-10-19"
+disposition = "reissue"
+rotation_preconditions = ["after every copy is re-set delete the App's other key pairs on its settings page: a new key pair does not revoke the old one", "the BWS keeper holds base64 of the PEM while each Actions copy holds the decoded PEM: decode before setting the Actions secrets"]
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "998b817e-6164-4b9f-9c52-b4e800e8270d"
+  note = "fork-secure-upstream-sync-app-private-key-b64 (Ops / Platform) — keeper; base64 of the PEM"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/rtk"
+  name = "APP_PRIVATE_KEY"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/claude-octopus"
+  name = "APP_PRIVATE_KEY"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/rea"
+  name = "APP_PRIVATE_KEY"
+
+# INCOMPLETE BY DESIGN: this entry lists ONLY the fork-sync lane's copies of the shared BWS
+# secret anthropic-api-key. Other repositories consume the same BWS secret (email-capture,
+# veritok, residential-pricing-model and infraops-mcp-server name it in their
+# .bws-secrets.toml) and are NOT censused here. consumers_verified is therefore deliberately
+# unset, so the rotation lane's fail-safe never treats this consumer set as complete.
+# No `created`: the key's creation date was not read (reading it from BWS prints the
+# value), so this entry has no age anchor and raises no cred.rotation-age finding.
+# Actions copies' set dates: rtk 2026-09-05, claude-octopus 2026-06-27, rea 2026-10-19.
+[[credential]]
+id = "anthropic-api-key"
+class = "anthropic-api-key"
+provider = "anthropic"
+provider_identity = "Anthropic Console API key (BWS anthropic-api-key)"
+bws_uuid = "b74bf8b3-938b-45c0-bc25-b415013cb563"
+disposition = "reissue"
+
+  [[credential.consumer]]
+  kind = "bws-secret"
+  uuid = "b74bf8b3-938b-45c0-bc25-b415013cb563"
+  note = "anthropic-api-key (Ops / Platform) — keeper; shared with repositories not listed here"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/rtk"
+  name = "ANTHROPIC_API_KEY"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/claude-octopus"
+  name = "ANTHROPIC_API_KEY"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/rea"
+  name = "ANTHROPIC_API_KEY"
