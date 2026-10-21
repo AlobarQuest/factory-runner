@@ -87,15 +87,16 @@ rotation_preconditions = ["extend the new PAT repository-access list (settings p
   note = "launchd com.devon.portfolio-scan 03:00; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check portfolio-scan"
 
 # ── The fork-sync lane (orchestrator docs/operations/onboarding-a-fork.md) ──────────────
-# Three forks run the secure upstream-sync workflow: AlobarQuest/rtk, AlobarQuest/claude-octopus
-# and AlobarQuest/rea. Each holds APP_ID, APP_PRIVATE_KEY and ANTHROPIC_API_KEY as Actions
-# secrets. Census 2026-10-19 (gh secret list on each fork). A new fork adds its copies as
-# consumers to BOTH entries below.
+# Five forks run the secure upstream-sync workflow: AlobarQuest/rtk, AlobarQuest/claude-octopus,
+# AlobarQuest/rea, AlobarQuest/n8n-as-code and AlobarQuest/n8n-manager. Each holds APP_ID,
+# APP_PRIVATE_KEY and ANTHROPIC_API_KEY as Actions secrets. Census 2026-10-21 (gh secret list on
+# each fork). A new fork adds its copies as consumers to BOTH entries below.
 
 # The private key of GitHub App fork-secure-upstream-sync (App id 4094707, installed on
-# exactly the three forks), created 2026-10-19. BWS holds base64 of the PEM; every Actions
-# copy holds the decoded PEM. All three APP_PRIVATE_KEY copies were set 2026-10-19 from
-# this BWS secret. The APP_ID copies in the same three repositories hold the App id
+# exactly the five forks), created 2026-10-19. BWS holds base64 of the PEM; every Actions
+# copy holds the decoded PEM. The APP_PRIVATE_KEY copies were set from this BWS secret: rtk,
+# claude-octopus and rea on 2026-10-19, n8n-as-code and n8n-manager on 2026-10-21. The APP_ID
+# copies in the same repositories hold the App id
 # (4094707), which is an identifier, not a credential, so they are not consumers here.
 # consumers_verified is unset: Actions secrets are write-only, so this census is by NAME.
 [[credential]]
@@ -128,6 +129,16 @@ rotation_preconditions = ["after every copy is re-set delete the App's other key
   repo = "AlobarQuest/rea"
   name = "APP_PRIVATE_KEY"
 
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/n8n-as-code"
+  name = "APP_PRIVATE_KEY"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/n8n-manager"
+  name = "APP_PRIVATE_KEY"
+
 # INCOMPLETE BY DESIGN: this entry lists ONLY the fork-sync lane's copies of the shared BWS
 # secret anthropic-api-key. Other repositories consume the same BWS secret (email-capture,
 # veritok, residential-pricing-model and infraops-mcp-server name it in their
@@ -135,7 +146,8 @@ rotation_preconditions = ["after every copy is re-set delete the App's other key
 # unset, so the rotation lane's fail-safe never treats this consumer set as complete.
 # No `created`: the key's creation date was not read (reading it from BWS prints the
 # value), so this entry has no age anchor and raises no cred.rotation-age finding.
-# Actions copies' set dates: rtk 2026-09-05, claude-octopus 2026-06-27, rea 2026-10-19.
+# Actions copies' set dates: rtk 2026-09-05, claude-octopus 2026-06-27, rea 2026-10-19,
+# n8n-as-code and n8n-manager 2026-10-21.
 [[credential]]
 id = "anthropic-api-key"
 class = "anthropic-api-key"
@@ -162,4 +174,14 @@ disposition = "reissue"
   [[credential.consumer]]
   kind = "gh-actions-secret"
   repo = "AlobarQuest/rea"
+  name = "ANTHROPIC_API_KEY"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/n8n-as-code"
+  name = "ANTHROPIC_API_KEY"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/n8n-manager"
   name = "ANTHROPIC_API_KEY"
