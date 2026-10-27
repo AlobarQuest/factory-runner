@@ -80,6 +80,11 @@ rotation_preconditions = ["extend the new PAT repository-access list (settings p
   name = "FACTORY_PR_TOKEN"
 
   [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/project-standards"
+  name = "FACTORY_PR_TOKEN"
+
+  [[credential.consumer]]
   kind = "runtime-fetch"
   repo = "project-standards"
   ref = "integrations/portfolio-scan.sh"
