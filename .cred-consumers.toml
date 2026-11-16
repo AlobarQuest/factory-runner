@@ -144,6 +144,11 @@ rotation_preconditions = ["after every copy is re-set delete the App's other key
   repo = "AlobarQuest/n8n-manager"
   name = "APP_PRIVATE_KEY"
 
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/modern-web-guidance"
+  name = "APP_PRIVATE_KEY"
+
 # INCOMPLETE BY DESIGN: this entry lists ONLY the fork-sync lane's copies of the shared BWS
 # secret anthropic-api-key. Other repositories consume the same BWS secret (email-capture,
 # veritok, residential-pricing-model and infraops-mcp-server name it in their
@@ -189,4 +194,9 @@ disposition = "reissue"
   [[credential.consumer]]
   kind = "gh-actions-secret"
   repo = "AlobarQuest/n8n-manager"
+  name = "ANTHROPIC_API_KEY"
+
+  [[credential.consumer]]
+  kind = "gh-actions-secret"
+  repo = "AlobarQuest/modern-web-guidance"
   name = "ANTHROPIC_API_KEY"
