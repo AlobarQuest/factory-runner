@@ -1,7 +1,7 @@
 # .cred-consumers.toml — WS-0.7 rotation-lane consumer inventory for FACTORY_PR_TOKEN,
 # the fine-grained PAT the reusable workflow checks out and pushes with (this repo's
-# .bws-secrets.toml already owns its BWS record), and for the fork-sync lane's
-# credentials (the GitHub App private key and the Anthropic API key; see the end).
+# .bws-secrets.toml already owns its BWS record), and for the fork-sync lane's copies of
+# the Anthropic API key (see the end).
 #
 # Read by infraops-mcp-server's nightly security-drift run (src/security-drift/
 # cred-rotation.ts) once this file's absolute path is listed in
@@ -91,63 +91,14 @@ rotation_preconditions = ["extend the new PAT repository-access list (settings p
   healthchecks_check = "portfolio-scan"
   note = "launchd com.devon.portfolio-scan 03:00; Keychain Claude/BWS_ACCESS_TOKEN_SDS (sds-operator); Healthchecks check portfolio-scan"
 
-# ── The fork-sync lane (orchestrator docs/operations/onboarding-a-fork.md) ──────────────
-# Five forks run the secure upstream-sync workflow: AlobarQuest/rtk, AlobarQuest/claude-octopus,
-# AlobarQuest/rea, AlobarQuest/n8n-as-code and AlobarQuest/n8n-manager. Each holds APP_ID,
-# APP_PRIVATE_KEY and ANTHROPIC_API_KEY as Actions secrets. Census 2026-10-21 (gh secret list on
-# each fork). A new fork adds its copies as consumers to BOTH entries below.
-
-# The private key of GitHub App fork-secure-upstream-sync (App id 4094707, installed on
-# exactly the five forks), created 2026-10-19. BWS holds base64 of the PEM; every Actions
-# copy holds the decoded PEM. The APP_PRIVATE_KEY copies were set from this BWS secret: rtk,
-# claude-octopus and rea on 2026-10-19, n8n-as-code and n8n-manager on 2026-10-21. The APP_ID
-# copies in the same repositories hold the App id
-# (4094707), which is an identifier, not a credential, so they are not consumers here.
-# consumers_verified is unset: Actions secrets are write-only, so this census is by NAME.
-[[credential]]
-id = "fork-sync-app-private-key"
-class = "github-app-private-key"
-provider = "github"
-provider_identity = "GitHub App fork-secure-upstream-sync (id 4094707), Credentials page Key pairs tab"
-bws_uuid = "998b817e-6164-4b9f-9c52-b4e800e8270d"
-created = "2026-10-19"
-disposition = "reissue"
-rotation_preconditions = ["after every copy is re-set delete the App's other key pairs on its settings page: a new key pair does not revoke the old one", "the BWS keeper holds base64 of the PEM while each Actions copy holds the decoded PEM: decode before setting the Actions secrets"]
-
-  [[credential.consumer]]
-  kind = "bws-secret"
-  uuid = "998b817e-6164-4b9f-9c52-b4e800e8270d"
-  note = "fork-secure-upstream-sync-app-private-key-b64 (Ops / Platform) — keeper; base64 of the PEM"
-
-  [[credential.consumer]]
-  kind = "gh-actions-secret"
-  repo = "AlobarQuest/rtk"
-  name = "APP_PRIVATE_KEY"
-
-  [[credential.consumer]]
-  kind = "gh-actions-secret"
-  repo = "AlobarQuest/claude-octopus"
-  name = "APP_PRIVATE_KEY"
-
-  [[credential.consumer]]
-  kind = "gh-actions-secret"
-  repo = "AlobarQuest/rea"
-  name = "APP_PRIVATE_KEY"
-
-  [[credential.consumer]]
-  kind = "gh-actions-secret"
-  repo = "AlobarQuest/n8n-as-code"
-  name = "APP_PRIVATE_KEY"
-
-  [[credential.consumer]]
-  kind = "gh-actions-secret"
-  repo = "AlobarQuest/n8n-manager"
-  name = "APP_PRIVATE_KEY"
-
-  [[credential.consumer]]
-  kind = "gh-actions-secret"
-  repo = "AlobarQuest/modern-web-guidance"
-  name = "APP_PRIVATE_KEY"
+# ── The fork-sync lane (AlobarQuest/localops, src/fork_sync/) ───────────────────────────
+# Six forks run the secure upstream-sync workflow: AlobarQuest/rtk, AlobarQuest/claude-octopus,
+# AlobarQuest/rea, AlobarQuest/n8n-as-code, AlobarQuest/n8n-manager and
+# AlobarQuest/modern-web-guidance. The GitHub App private key's entry
+# (fork-sync-app-private-key) lives in localops' own .cred-consumers.toml (ADR-0059
+# Amendment 16 task 5). This file keeps only the lane's anthropic-api-key copies, which
+# `fork-sync onboard` registers here. A new fork adds its ANTHROPIC_API_KEY copy as a
+# consumer to the entry below.
 
 # INCOMPLETE BY DESIGN: this entry lists ONLY the fork-sync lane's copies of the shared BWS
 # secret anthropic-api-key. Other repositories consume the same BWS secret (email-capture,
