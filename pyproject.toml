@@ -18,7 +18,7 @@ factory-runner = "factory_runner.cli:app"
 [dependency-groups]
 dev = [
   "pytest>=9.2.0",
-  "pyyaml>=6.0",
+  "pyyaml>=6.0.4",
   "ruff==0.17.5",
   "pyright==1.1.414",
 ]
